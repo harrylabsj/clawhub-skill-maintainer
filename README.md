@@ -5,9 +5,9 @@ Maintenance dashboard for a ClawHub publisher portfolio.
 Published locations:
 
 - GitHub: https://github.com/harrylabsj/clawhub-skill-maintainer
-- ClawHub: https://clawhub.ai/harrylabsj/skill-portfolio-maintainer
+- ClawHub: https://clawhub.ai/harrylabsj/skill-maintainer
 
-Note: the GitHub/local project is named `clawhub-skill-maintainer`, but the ClawHub slug is `skill-portfolio-maintainer` because `clawhub-` is a protected slug namespace on ClawHub.
+Note: the GitHub/local project is named `clawhub-skill-maintainer`, but the ClawHub slug is `skill-maintainer` because `clawhub-` is a protected slug namespace on ClawHub. The previous temporary slug `skill-portfolio-maintainer` redirects to `skill-maintainer`.
 
 ## What It Does
 
