@@ -2,6 +2,13 @@
 
 Maintenance dashboard for a ClawHub publisher portfolio.
 
+Published locations:
+
+- GitHub: https://github.com/harrylabsj/clawhub-skill-maintainer
+- ClawHub: https://clawhub.ai/harrylabsj/skill-portfolio-maintainer
+
+Note: the GitHub/local project is named `clawhub-skill-maintainer`, but the ClawHub slug is `skill-portfolio-maintainer` because `clawhub-` is a protected slug namespace on ClawHub.
+
 ## What It Does
 
 - Collects public publisher profile data and all published skill listings.
