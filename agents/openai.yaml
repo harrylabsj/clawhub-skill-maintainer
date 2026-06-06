@@ -1,0 +1,8 @@
+interface:
+  display_name: "ClawHub Skill Maintainer"
+  short_description: "Audit and maintain large ClawHub skill portfolios"
+  brand_color: "#2563EB"
+  default_prompt: "Use $clawhub-skill-maintainer to analyze my ClawHub skill portfolio and generate approval-ready hide, merge, and upgrade recommendations."
+
+policy:
+  allow_implicit_invocation: true

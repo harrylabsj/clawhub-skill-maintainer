@@ -1,0 +1,16 @@
+{
+  "name": "clawhub-skill-maintainer-skill",
+  "version": "1.1.0",
+  "description": "Audit and maintain large ClawHub skill portfolios.",
+  "main": "SKILL.md",
+  "scripts": {},
+  "keywords": [
+    "openclaw",
+    "clawhub",
+    "skill",
+    "maintenance",
+    "approval"
+  ],
+  "author": "Harry",
+  "license": "MIT"
+}

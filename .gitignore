@@ -1,0 +1,10 @@
+.cache/
+.matplotlib-cache/
+data/
+reports/
+logs/
+__pycache__/
+scripts/__pycache__/
+*.pyc
+*.log
+.DS_Store
