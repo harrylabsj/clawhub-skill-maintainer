@@ -11,6 +11,14 @@
     "maintenance",
     "approval"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harrylabsj/clawhub-skill-maintainer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/harrylabsj/clawhub-skill-maintainer/issues"
+  },
+  "homepage": "https://github.com/harrylabsj/clawhub-skill-maintainer",
   "author": "Harry",
   "license": "MIT"
 }

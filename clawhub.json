@@ -19,8 +19,8 @@
     "productivity",
     "automation"
   ],
-  "homepage": "",
-  "repository": "",
-  "bugs": "",
+  "homepage": "https://github.com/harrylabsj/clawhub-skill-maintainer",
+  "repository": "https://github.com/harrylabsj/clawhub-skill-maintainer",
+  "bugs": "https://github.com/harrylabsj/clawhub-skill-maintainer/issues",
   "icon": "tools"
 }
