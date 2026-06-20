@@ -15,6 +15,7 @@ from typing import Any
 
 LOW_SIGNAL_VERDICTS = {"low_signal", "plausible_but_low_signal"}
 PUBLIC_UTILITY_CATEGORIES = {"Developer", "Data", "Knowledge", "Automation", "Shopping"}
+DESTRUCTIVE_PLAN_NAMES = {"hide", "merge", "private_backlog"}
 
 
 def to_int(value: Any) -> int:
@@ -40,6 +41,16 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -61,6 +72,45 @@ def engagement(row: dict[str, Any]) -> int:
 
 def is_low_signal(row: dict[str, Any]) -> bool:
     return row.get("meaningfulness") in LOW_SIGNAL_VERDICTS
+
+
+def maintenance_priority_rank(value: str) -> int:
+    return {
+        "P0_feedback": 0,
+        "P1_maintain": 1,
+        "P2_upgrade": 2,
+        "P3_watch": 3,
+        "P4_low_priority": 4,
+    }.get(value, 9)
+
+
+def quality_maintenance_plan(rows: list[dict[str, str]], *, limit: int) -> list[dict[str, Any]]:
+    candidates = [
+        row
+        for row in rows
+        if row.get("maintenance_priority") in {"P0_feedback", "P1_maintain", "P2_upgrade"}
+        or to_float(row.get("quality_score")) >= 55
+        or row.get("portfolio_decision") in {"fix_and_reply", "keep_public", "upgrade_public"}
+    ]
+    candidates.sort(
+        key=lambda row: (
+            maintenance_priority_rank(row.get("maintenance_priority", "")),
+            -to_float(row.get("quality_score")),
+            -to_int(row.get("installs_all_time")),
+            -to_int(row.get("stars")),
+            -to_int(row.get("downloads")),
+            row.get("slug", ""),
+        )
+    )
+    return [
+        plan_row(
+            row,
+            operation="maintain",
+            command=command_quote("clawhub", "inspect", row["slug"], "--files"),
+            risk="low",
+        )
+        for row in candidates[:limit]
+    ]
 
 
 def hide_plan(rows: list[dict[str, str]], *, limit: int, max_downloads: int) -> list[dict[str, Any]]:
@@ -224,6 +274,9 @@ def plan_row(
         "versions": row.get("versions", ""),
         "meaning_score": row.get("meaning_score", ""),
         "meaningfulness": row.get("meaningfulness", ""),
+        "quality_score": row.get("quality_score", ""),
+        "maintenance_priority": row.get("maintenance_priority", ""),
+        "quality_reason": row.get("quality_reason", ""),
         "portfolio_decision": row.get("portfolio_decision", ""),
         "portfolio_reason": row.get("portfolio_reason", ""),
         "merge_family_key": row.get("merge_family_key", ""),
@@ -251,12 +304,25 @@ def write_review_script(path: Path, title: str, commands: list[str]) -> None:
 
 
 def approval_batches(plans: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    quality_items = plans["quality_maintenance"][:25]
     hide_items = [row for row in plans["hide"] if to_int(row.get("downloads")) < 100][:25]
     merge_items = plans["merge"][:10]
     upgrade_items = plans["upgrade"][:20]
     private_items = plans["private_backlog"][:25]
 
     batches: list[dict[str, Any]] = []
+    if quality_items:
+        batches.append(
+            approval_batch(
+                "QUALITY_MAINTENANCE_001",
+                "maintain",
+                "Quality maintenance queue",
+                "Review these high-quality or high-signal skills first for examples, metadata, and version upgrades.",
+                "non-destructive inspection queue",
+                "low",
+                quality_items,
+            )
+        )
     if hide_items:
         batches.append(
             approval_batch(
@@ -337,18 +403,19 @@ def approval_batch(
     }
 
 
-def write_approval_manifest(path: Path, handle: str, batches: list[dict[str, Any]]) -> None:
+def write_approval_manifest(path: Path, handle: str, batches: list[dict[str, Any]], data_quality: dict[str, Any]) -> None:
     manifest = {
         "handle": handle,
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "purpose": "approval-ready dry-run batches; no action has been executed",
+        "data_quality": data_quality,
         "batches": batches,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def write_approval_board(path: Path, handle: str, batches: list[dict[str, Any]]) -> None:
+def write_approval_board(path: Path, handle: str, batches: list[dict[str, Any]], data_quality: dict[str, Any]) -> None:
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
         f"# Approval Board - {handle}",
@@ -356,6 +423,7 @@ def write_approval_board(path: Path, handle: str, batches: list[dict[str, Any]])
         f"Generated: {generated}",
         "",
         "This board is designed for user approval. It is analysis-only: no ClawHub action has been executed.",
+        f"Data quality: `{data_quality.get('status', 'unknown')}`.",
         "",
         "## How To Approve",
         "",
@@ -363,6 +431,11 @@ def write_approval_board(path: Path, handle: str, batches: list[dict[str, Any]])
         "Do not approve merge batches unless the canonical targets look right; the CLI does not expose an unmerge command.",
         "",
     ]
+    warnings = data_quality.get("warnings", [])
+    if warnings:
+        lines.extend(["## Data Quality Warnings", ""])
+        for warning in warnings:
+            lines.append(f"- {warning}")
     for batch in batches:
         lines.extend(approval_batch_markdown(batch))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -370,7 +443,7 @@ def write_approval_board(path: Path, handle: str, batches: list[dict[str, Any]])
 
 
 def approval_batch_markdown(batch: dict[str, Any]) -> list[str]:
-    keys = ["slug", "target_slug", "downloads", "meaning_score", "category", "portfolio_reason"]
+    keys = ["slug", "target_slug", "downloads", "quality_score", "maintenance_priority", "category", "quality_reason"]
     rows = batch.get("items", [])
     lines = [
         "",
@@ -416,13 +489,16 @@ def write_approval_commands(path: Path, batches: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]]]) -> None:
+def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]]], data_quality: dict[str, Any]) -> None:
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    total_quality = len(plans["quality_maintenance"])
     total_hide = len(plans["hide"])
     total_private_backlog = len(plans["private_backlog"])
     total_merge = len(plans["merge"])
     total_upgrade = len(plans["upgrade"])
     total_monitor = len(plans["monitor"])
+    quality_status = data_quality.get("status", "unknown")
+    quality_warnings = data_quality.get("warnings", [])
     lines = [
         f"# ClawHub Maintenance Action Plan - {handle}",
         "",
@@ -432,14 +508,18 @@ def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]
         "",
         "## Summary",
         "",
+        f"- quality maintenance queue: {total_quality}",
         f"- hide candidates: {total_hide}",
         f"- private backlog review: {total_private_backlog}",
         f"- merge commands: {total_merge}",
         f"- upgrade inspection queue: {total_upgrade}",
         f"- monitor queue: {total_monitor}",
+        f"- data quality: {quality_status}",
         "",
         "## Safety Rules",
         "",
+        "- Quality maintenance is the default lens; cleanup is secondary.",
+        "- When data quality is partial, cleanup plans are suppressed and only non-destructive review queues remain.",
         "- Hide before delete. Current ClawHub CLI exposes `hide/unhide`, not a dedicated skill-private mode.",
         "- Generated shell files keep commands commented out by default.",
         "- Do not batch-hide skills with installs, stars, or comments without manual review.",
@@ -447,6 +527,11 @@ def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]
         "- Merge only when the target skill is a better canonical home for the capability family.",
         "",
     ]
+    if quality_warnings:
+        lines.extend(["## Data Quality Warnings", ""])
+        for warning in quality_warnings:
+            lines.append(f"- {warning}")
+    lines.extend(markdown_table("Quality Maintenance Queue", plans["quality_maintenance"], ["slug", "downloads", "quality_score", "maintenance_priority", "category", "quality_reason"]))
     lines.extend(markdown_table("Hide Candidates", plans["hide"], ["slug", "downloads", "meaning_score", "category", "portfolio_reason"]))
     lines.extend(markdown_table("Private Backlog Review", plans["private_backlog"], ["slug", "downloads", "meaning_score", "category", "portfolio_reason"]))
     lines.extend(markdown_table("Merge Candidates", plans["merge"], ["slug", "target_slug", "merge_family_key", "downloads", "meaning_score"]))
@@ -488,27 +573,37 @@ def main() -> int:
     parser.add_argument("--merge-limit", type=int, default=200)
     parser.add_argument("--upgrade-limit", type=int, default=120)
     parser.add_argument("--monitor-limit", type=int, default=120)
+    parser.add_argument("--quality-limit", type=int, default=120)
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.out_dir)
     rows = read_csv(data_dir / "processed" / f"{args.handle}_skill_analysis.csv")
+    analysis_summary = read_json(data_dir / "processed" / f"{args.handle}_summary.json")
+    data_quality = analysis_summary.get("data_quality") if isinstance(analysis_summary.get("data_quality"), dict) else {}
+    destructive_allowed = bool(data_quality.get("destructive_actions_allowed", True))
 
     plans = {
+        "quality_maintenance": quality_maintenance_plan(rows, limit=args.quality_limit),
         "hide": hide_plan(rows, limit=args.hide_limit, max_downloads=args.hide_max_downloads),
         "private_backlog": private_backlog_plan(rows, limit=args.private_backlog_limit, max_downloads=args.hide_max_downloads),
         "merge": merge_plan(rows, limit=args.merge_limit),
         "upgrade": upgrade_plan(rows, limit=args.upgrade_limit),
         "monitor": monitor_plan(rows, limit=args.monitor_limit),
     }
+    suppressed_counts = {name: len(plans[name]) for name in DESTRUCTIVE_PLAN_NAMES}
+    if not destructive_allowed:
+        for name in DESTRUCTIVE_PLAN_NAMES:
+            plans[name] = []
+
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, plan_rows in plans.items():
         write_csv(out_dir / f"{args.handle}_{name}_plan.csv", plan_rows)
 
     batches = approval_batches(plans)
     approval_dir = Path(args.approval_dir)
-    write_approval_manifest(approval_dir / f"{args.handle}_approval_manifest.json", args.handle, batches)
-    write_approval_board(approval_dir / f"{args.handle}_approval_board.md", args.handle, batches)
+    write_approval_manifest(approval_dir / f"{args.handle}_approval_manifest.json", args.handle, batches, data_quality)
+    write_approval_board(approval_dir / f"{args.handle}_approval_board.md", args.handle, batches, data_quality)
     write_approval_commands(approval_dir / f"{args.handle}_approval_commands.sh", batches)
 
     write_review_script(
@@ -521,12 +616,15 @@ def main() -> int:
         f"Review merge candidates for {args.handle}",
         [row["command"] for row in plans["merge"] if row.get("command")],
     )
-    write_markdown(out_dir / f"{args.handle}_action_plan.md", args.handle, plans)
+    write_markdown(out_dir / f"{args.handle}_action_plan.md", args.handle, plans, data_quality)
 
     summary = {name: len(plan_rows) for name, plan_rows in plans.items()}
     summary["approval_batches"] = len(batches)
+    summary["data_quality_status"] = data_quality.get("status", "unknown")
+    if not destructive_allowed:
+        summary["suppressed_cleanup_counts"] = suppressed_counts
     (out_dir / f"{args.handle}_action_plan_summary.json").write_text(
-        json.dumps({"handle": args.handle, "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "counts": summary}, indent=2),
+        json.dumps({"handle": args.handle, "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "data_quality": data_quality, "counts": summary}, indent=2),
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2))

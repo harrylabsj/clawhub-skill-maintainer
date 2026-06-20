@@ -1,17 +1,19 @@
 ---
 name: clawhub-skill-maintainer
-description: Maintain a large ClawHub skill portfolio. Use when the user wants to audit published skills, analyze downloads/installs/stars/comments, detect bulk-publishing account risk, recommend hide/merge/upgrade actions, generate approval-ready action plans, or build/update a ClawHub skill dashboard.
+description: Maintain a large ClawHub skill portfolio with a quality-first lens. Use when the user wants to audit published skills, find high-quality skills worth maintaining, analyze downloads/installs/stars/comments, detect stale or partial data, generate safe upgrade/maintenance queues, handle bulk-publishing account risk, or build/update a ClawHub skill dashboard.
 ---
 
 # ClawHub Skill Maintainer
 
-Use this skill to audit and maintain a ClawHub publisher portfolio, especially when a large number of bulk-generated skills may create spam, quality, or account-review risk.
+Use this skill to audit and maintain a ClawHub publisher portfolio, especially when the maintainer needs to identify which skills deserve ongoing public investment.
 
 ## Operating Principle
 
-Analyze first, ask for approval second, execute last.
+Preserve quality first, analyze cleanup second, ask for approval third, execute last.
 
-The default output is an evidence-backed recommendation set. Do not run public visibility changes, merge commands, delete commands, or publish updates unless the user explicitly approves the specific batch or operation.
+The default output is an evidence-backed maintenance queue. Prefer skills with real user signal, clear public utility, complete metadata, source provenance, version history, recent updates, and growth momentum. Treat cleanup as secondary and only act on it when the data quality status is `ok`.
+
+Do not run public visibility changes, merge commands, delete commands, or publish updates unless the user explicitly approves the specific batch or operation.
 
 ## Core Workflow
 
@@ -31,6 +33,7 @@ The default output is an evidence-backed recommendation set. Do not run public v
 
    - Dashboard: `reports/index.html`
    - Scored analysis: `data/processed/<handle>_skill_analysis.csv`
+   - Summary and quality queue: `data/processed/<handle>_summary.json`
    - Low-signal triage: `data/processed/<handle>_low_signal_triage.csv`
    - Latest snapshot: `data/snapshots/<handle>/latest.json`
    - Growth deltas: `data/processed/<handle>_skill_growth.csv`
@@ -40,15 +43,40 @@ The default output is an evidence-backed recommendation set. Do not run public v
 
 3. Explain the recommendation to the user in business terms:
 
+   - which skills are worth maintaining first
+   - which quality signals explain that priority
    - what should stay public
    - what should be upgraded
-   - what should be hidden first
-   - what should be merged only after review
+   - what cleanup was suppressed because the data is partial
+   - what should be hidden or merged only after explicit cleanup review
    - what should be monitored
 
 4. Ask the user to approve one batch at a time using the exact approval phrase shown in the generated approval board.
 
 5. After approval, execute only the approved commands and report the outcome.
+
+## Quality Maintenance Lens
+
+Start with `quality_maintenance_queue` in `data/processed/<handle>_summary.json` and `reports/action_plans/<handle>_quality_maintenance_plan.csv`.
+
+Strong quality signals include:
+
+- installs, stars, comments, or sustained downloads
+- public-utility categories such as developer, data, knowledge, automation, or shopping
+- rich summary, useful tags, changelog, source repo/path metadata
+- multiple versions or recent updates
+- positive growth in downloads or installs since the previous snapshot
+
+When a skill has quality signal, recommend concrete upgrades before any visibility cleanup: improve `SKILL.md`, examples, bilingual search terms, tags, changelog, source metadata, tests, and release notes.
+
+## Data Quality Guardrails
+
+Treat the run as `partial` when profile totals and processed totals diverge, many detail requests fail, many rows are unexpectedly zero-download, the report falls back to cache, or deltas are negative. In partial mode:
+
+- keep quality maintenance, upgrade, and monitor queues
+- suppress hide, merge, delete, and bulk-cleanup approval batches
+- tell the user which warning caused suppression
+- refresh data later instead of retrying aggressively during rate limits
 
 ## Account-Risk Cleanup Lens
 
@@ -64,9 +92,9 @@ The strongest bulk-risk pattern is:
 
 Recommended default policy:
 
-- Phase 1: hide low-download skills matching the strongest risk pattern.
+- Phase 1: hide low-download skills matching the strongest risk pattern only when data quality is `ok`.
 - Phase 2: spot-check, then hide moderate-download skills matching the same pattern.
-- Phase 3: upgrade within a short deadline or hide.
+- Phase 3: upgrade within a short deadline or hide only after the upgrade decision is reviewed.
 - Phase 4: merge or hide repeated families only after target review.
 - Do not delete by default.
 
@@ -125,7 +153,9 @@ Use `--baseline` when the account has materially changed and the next run should
 ## Safety Rules
 
 - Never execute hide, merge, delete, or publish actions merely because a report recommends them.
+- Never execute hide, merge, or delete actions when `data_quality.status` is `partial`.
 - Never batch-hide skills with installs, stars, comments, or strong usage without manual review.
+- Do not treat zero downloads as evidence when detail fetches failed or profile totals disagree with processed totals.
 - Use hide/private-style cleanup before deletion.
 - Treat generated shell files as commented approval previews.
 - Keep generated data, caches, logs, and reports out of the published skill package.

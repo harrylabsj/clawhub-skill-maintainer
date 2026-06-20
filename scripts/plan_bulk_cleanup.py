@@ -39,6 +39,16 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -70,12 +80,12 @@ def bulk_risk_features(row: dict[str, str]) -> tuple[int, list[str]]:
     if to_int(row.get("versions")) <= 1:
         score += 20
         features.append("single_version")
-    if to_int(row.get("downloads")) < 200:
+    if to_int(row.get("downloads")) < 100:
         score += 15
-        features.append("downloads_under_200")
+        features.append("downloads_under_100")
     elif to_int(row.get("downloads")) < 300:
         score += 10
-        features.append("downloads_200_299")
+        features.append("downloads_100_299")
     if to_int(row.get("tag_count")) <= 1:
         score += 8
         features.append("minimal_tags")
@@ -100,11 +110,11 @@ def phase_for(row: dict[str, str]) -> tuple[str, str, str]:
     downloads = to_int(row.get("downloads"))
     versions = to_int(row.get("versions"))
 
-    if low_signal and zero_engagement and single_version and downloads < 200:
+    if low_signal and zero_engagement and single_version and downloads < 100:
         return (
             "phase1_clear_hide",
             "Hide now",
-            "Strong bulk-publishing signal: low/plausible-low, single version, zero engagement, downloads under 200.",
+            "Strong bulk-publishing signal: low/plausible-low, single version, zero engagement, downloads under 100.",
         )
     if low_signal and zero_engagement and single_version and downloads < 300:
         return (
@@ -229,6 +239,24 @@ def build_bulk_approval_batches(planned: list[dict[str, Any]]) -> list[dict[str,
     return batches
 
 
+def suppress_cleanup_for_partial_data(planned: list[dict[str, Any]], data_quality: dict[str, Any]) -> list[dict[str, Any]]:
+    warnings = data_quality.get("warnings", [])
+    suffix = "; ".join(str(warning) for warning in warnings[:3])
+    reason = "Data quality is partial; do not hide, merge, or delete until a clean collection confirms the signal."
+    if suffix:
+        reason = f"{reason} Warnings: {suffix}"
+    suppressed: list[dict[str, Any]] = []
+    for row in planned:
+        copy = dict(row)
+        copy["phase"] = "not_delist_now"
+        copy["recommendation"] = "Do not delist while data is partial"
+        copy["reason"] = reason
+        copy["command"] = ""
+        suppressed.append(copy)
+    suppressed.sort(key=lambda row: (-to_int(row.get("downloads")), row.get("slug", "")))
+    return suppressed
+
+
 def bulk_batch(
     batch_id: str,
     operation: str,
@@ -259,7 +287,7 @@ def bulk_batch(
     }
 
 
-def write_bulk_approval_manifest(path: Path, handle: str, batches: list[dict[str, Any]]) -> None:
+def write_bulk_approval_manifest(path: Path, handle: str, batches: list[dict[str, Any]], data_quality: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -267,6 +295,7 @@ def write_bulk_approval_manifest(path: Path, handle: str, batches: list[dict[str
                 "handle": handle,
                 "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "purpose": "bulk publishing risk reduction approval batches; no action has been executed",
+                "data_quality": data_quality,
                 "batches": batches,
             },
             ensure_ascii=False,
@@ -276,7 +305,7 @@ def write_bulk_approval_manifest(path: Path, handle: str, batches: list[dict[str
     )
 
 
-def write_bulk_approval_board(path: Path, handle: str, batches: list[dict[str, Any]]) -> None:
+def write_bulk_approval_board(path: Path, handle: str, batches: list[dict[str, Any]], data_quality: dict[str, Any]) -> None:
     lines = [
         f"# Bulk Cleanup Approval Board - {handle}",
         "",
@@ -284,13 +313,19 @@ def write_bulk_approval_board(path: Path, handle: str, batches: list[dict[str, A
         "",
         "This board is specifically for reducing account risk caused by bulk-published public skills.",
         "No action has been executed.",
+        f"Data quality: `{data_quality.get('status', 'unknown')}`.",
         "",
         "## Recommendation",
         "",
-        "Approve Phase 1 first. It has the clearest bulk-risk evidence: low/plausible-low signal, single version, zero installs/stars/comments, and downloads under 200.",
-        "Phase 2 should be spot-checked first. Phase 3 should be treated as an upgrade deadline. Phase 4 should be handled carefully because merge reversibility is unknown.",
+        "Prefer quality maintenance. Run bulk cleanup only when data quality is `ok` and the user explicitly asks for account-risk cleanup.",
         "",
     ]
+    warnings = data_quality.get("warnings", [])
+    if warnings:
+        lines.extend(["## Data Quality Warnings", ""])
+        for warning in warnings:
+            lines.append(f"- {warning}")
+        lines.extend(["", "Cleanup batches are suppressed until a clean data collection confirms the signal.", ""])
     for batch in batches:
         lines.extend(bulk_batch_markdown(batch))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,7 +360,7 @@ def bulk_batch_markdown(batch: dict[str, Any]) -> list[str]:
     return lines
 
 
-def write_report(path: Path, handle: str, planned: list[dict[str, Any]]) -> None:
+def write_report(path: Path, handle: str, planned: list[dict[str, Any]], data_quality: dict[str, Any]) -> None:
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     counts = Counter(row["phase"] for row in planned)
     total = len(planned)
@@ -339,6 +374,7 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]]) -> None
         f"Generated: {generated}",
         "",
         "This report focuses on account-risk reduction from bulk publishing signals, not only product usefulness.",
+        f"Data quality: `{data_quality.get('status', 'unknown')}`.",
         "",
         "## Clear Recommendation",
         "",
@@ -347,12 +383,17 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]]) -> None
         f"- Upgrade within 7 days or hide phase 3: {len(phase3)} skills.",
         f"- Merge or hide repeated families phase 4: {len(phase4)} skills.",
         "",
-        "The strongest account-risk pattern is: low/plausible-low signal + single version + zero installs/stars/comments. There are 704 skills matching that pattern.",
-        "Phase 1 and phase 2 together remove 675 of those 704 from public visibility while keeping all source material locally recoverable.",
+        "The strongest account-risk pattern is: low/plausible-low signal + single version + zero installs/stars/comments. The count varies by portfolio state.",
         "",
         "## Phase Counts",
         "",
     ]
+    warnings = data_quality.get("warnings", [])
+    if warnings:
+        lines.extend(["## Data Quality Warnings", ""])
+        for warning in warnings:
+            lines.append(f"- {warning}")
+        lines.extend(["", "Cleanup is suppressed while these warnings are present.", ""])
     for phase in [
         "phase1_clear_hide",
         "phase2_hide_after_spotcheck",
@@ -397,20 +438,28 @@ def main() -> int:
     parser.add_argument("--out-dir", default="reports/bulk_cleanup")
     args = parser.parse_args()
 
-    rows = read_csv(Path(args.data_dir) / "processed" / f"{args.handle}_skill_analysis.csv")
+    data_dir = Path(args.data_dir)
+    rows = read_csv(data_dir / "processed" / f"{args.handle}_skill_analysis.csv")
+    analysis_summary = read_json(data_dir / "processed" / f"{args.handle}_summary.json")
+    data_quality = analysis_summary.get("data_quality") if isinstance(analysis_summary.get("data_quality"), dict) else {}
+    cleanup_allowed = bool(data_quality.get("cleanup_actions_allowed", True))
     planned = build_rows(rows)
+    suppressed_cleanup_count = 0
+    if not cleanup_allowed:
+        suppressed_cleanup_count = sum(1 for row in planned if row.get("command"))
+        planned = suppress_cleanup_for_partial_data(planned, data_quality)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     write_csv(out_dir / f"{args.handle}_bulk_cleanup_all.csv", planned)
     for phase in sorted({row["phase"] for row in planned}, key=phase_rank):
         write_csv(out_dir / f"{args.handle}_{phase}.csv", [row for row in planned if row["phase"] == phase])
-    write_report(out_dir / f"{args.handle}_bulk_cleanup_report.md", args.handle, planned)
+    write_report(out_dir / f"{args.handle}_bulk_cleanup_report.md", args.handle, planned, data_quality)
     write_command_script(out_dir / f"{args.handle}_phase1_hide_commands.sh", planned, "phase1_clear_hide", "Phase 1 clear hide commands")
     write_command_script(out_dir / f"{args.handle}_phase2_hide_commands.sh", planned, "phase2_hide_after_spotcheck", "Phase 2 hide-after-spotcheck commands")
-    batches = build_bulk_approval_batches(planned)
-    write_bulk_approval_manifest(out_dir / f"{args.handle}_bulk_approval_manifest.json", args.handle, batches)
-    write_bulk_approval_board(out_dir / f"{args.handle}_bulk_approval_board.md", args.handle, batches)
+    batches = build_bulk_approval_batches(planned) if cleanup_allowed else []
+    write_bulk_approval_manifest(out_dir / f"{args.handle}_bulk_approval_manifest.json", args.handle, batches, data_quality)
+    write_bulk_approval_board(out_dir / f"{args.handle}_bulk_approval_board.md", args.handle, batches, data_quality)
 
     counts = Counter(row["phase"] for row in planned)
     summary = {
@@ -419,6 +468,8 @@ def main() -> int:
         "counts": dict(counts),
         "clear_hide_plus_spotcheck_hide": counts.get("phase1_clear_hide", 0) + counts.get("phase2_hide_after_spotcheck", 0),
         "approval_batches": len(batches),
+        "data_quality": data_quality,
+        "suppressed_cleanup_command_count": suppressed_cleanup_count,
     }
     (out_dir / f"{args.handle}_bulk_cleanup_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary["counts"], indent=2))

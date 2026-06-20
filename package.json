@@ -1,7 +1,7 @@
 {
   "name": "clawhub-skill-maintainer-skill",
-  "version": "1.1.0",
-  "description": "Audit and maintain large ClawHub skill portfolios.",
+  "version": "1.2.0",
+  "description": "Audit and maintain large ClawHub skill portfolios with quality-first maintenance queues.",
   "main": "SKILL.md",
   "scripts": {},
   "keywords": [
@@ -9,6 +9,7 @@
     "clawhub",
     "skill",
     "maintenance",
+    "quality",
     "approval"
   ],
   "repository": {

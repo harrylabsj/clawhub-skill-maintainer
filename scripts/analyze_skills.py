@@ -42,6 +42,20 @@ DECISION_RANKS = {
 
 
 LOW_SIGNAL_VERDICTS = {"low_signal", "plausible_but_low_signal"}
+PUBLIC_UTILITY_CATEGORIES = {"Developer", "Data", "Knowledge", "Automation", "Shopping"}
+QUALITY_SIGNAL_CATEGORIES = PUBLIC_UTILITY_CATEGORIES | {
+    "Business",
+    "Content",
+    "Design",
+    "Education",
+    "Personal",
+    "Productivity",
+}
+DESTRUCTIVE_PORTFOLIO_DECISIONS = {
+    "delete_candidate",
+    "merge_into_stronger_skill",
+    "move_private_or_hide",
+}
 
 
 def to_int(value: Any) -> int:
@@ -81,6 +95,16 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def normalize_text(*parts: str) -> str:
@@ -160,6 +184,104 @@ def safe_log_score(value: int, max_value: int, points: float) -> float:
     if value <= 0 or max_value <= 0:
         return 0.0
     return min(points, math.log1p(value) / math.log1p(max_value) * points)
+
+
+def quality_score_and_reason(
+    row: dict[str, str],
+    *,
+    category: str,
+    downloads: int,
+    installs: int,
+    stars: int,
+    comments: int,
+    versions: int,
+    tag_count: int,
+    summary: str,
+    changelog: str,
+    content_score: float,
+    maintenance_score: float,
+    days_since_update: int,
+    duplicate_size: int,
+) -> tuple[float, str, str]:
+    engagement_points = min(22.0, installs * 3.0 + stars * 6.0 + comments * 10.0)
+    demand_points = min(24.0, math.log1p(downloads) * 3.2) if downloads > 0 else 0.0
+    metadata_points = min(18.0, content_score * 1.15)
+    maintenance_points = min(16.0, maintenance_score * 1.1)
+    category_points = 9.0 if category in PUBLIC_UTILITY_CATEGORIES else 5.0 if category in QUALITY_SIGNAL_CATEGORIES else 0.0
+    source_points = 6.0 if row.get("source_repo") or row.get("source_path") else 0.0
+
+    penalty = 0.0
+    if duplicate_size >= 8:
+        penalty += 7.0
+    elif duplicate_size >= 4:
+        penalty += 3.5
+    if days_since_update > 365:
+        penalty += 4.0
+    if len(summary) < 40 and tag_count == 0:
+        penalty += 4.0
+
+    quality_score = round(max(0.0, min(100.0, engagement_points + demand_points + metadata_points + maintenance_points + category_points + source_points - penalty)), 1)
+
+    reasons: list[str] = []
+    if comments > 0:
+        reasons.append("has_user_feedback")
+    if installs > 0:
+        reasons.append("has_installs")
+    if stars > 0:
+        reasons.append("has_stars")
+    if downloads >= 1000:
+        reasons.append("strong_download_demand")
+    elif downloads >= 300:
+        reasons.append("moderate_download_demand")
+    if versions >= 3:
+        reasons.append("maintained_versions")
+    elif versions >= 2:
+        reasons.append("multi_version")
+    if len(summary) >= 120:
+        reasons.append("rich_summary")
+    if tag_count >= 3:
+        reasons.append("good_tags")
+    if changelog:
+        reasons.append("has_changelog")
+    if row.get("source_repo") or row.get("source_path"):
+        reasons.append("has_source_metadata")
+    if category in PUBLIC_UTILITY_CATEGORIES:
+        reasons.append("public_utility_category")
+    elif category in QUALITY_SIGNAL_CATEGORIES:
+        reasons.append("clear_use_case_category")
+    if days_since_update <= 90:
+        reasons.append("recently_updated")
+
+    if not reasons:
+        reasons.append("needs_more_evidence_before_cleanup")
+
+    priority = maintenance_priority_for(
+        quality_score=quality_score,
+        downloads=downloads,
+        installs=installs,
+        stars=stars,
+        comments=comments,
+    )
+    return quality_score, priority, "|".join(reasons[:7])
+
+
+def maintenance_priority_for(
+    *,
+    quality_score: float,
+    downloads: int,
+    installs: int,
+    stars: int,
+    comments: int,
+) -> str:
+    if comments > 0:
+        return "P0_feedback"
+    if installs >= 5 or stars > 0 or downloads >= 1000 or quality_score >= 75:
+        return "P1_maintain"
+    if installs > 0 or downloads >= 300 or quality_score >= 55:
+        return "P2_upgrade"
+    if downloads >= 100 or quality_score >= 42:
+        return "P3_watch"
+    return "P4_low_priority"
 
 
 def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict[str, int], now: datetime) -> dict[str, Any]:
@@ -247,7 +369,7 @@ def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict
         action = "keep_public"
     elif score >= 45 or downloads >= 200 or engagement == 1:
         action = "curate_or_improve"
-    elif score < 40 and downloads < 80 and engagement == 0:
+    elif score < 40 and downloads < 100 and engagement == 0:
         action = "consider_private_or_delete"
     elif score >= 30 or duplicate_size >= 4:
         action = "review_for_merge_or_private"
@@ -263,6 +385,23 @@ def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict
     else:
         verdict = "low_signal"
 
+    quality_score, maintenance_priority, quality_reason = quality_score_and_reason(
+        row,
+        category=category,
+        downloads=downloads,
+        installs=installs,
+        stars=stars,
+        comments=comments,
+        versions=versions,
+        tag_count=tag_count,
+        summary=summary,
+        changelog=changelog,
+        content_score=content_score,
+        maintenance_score=maintenance_score,
+        days_since_update=days_since_update,
+        duplicate_size=duplicate_size,
+    )
+
     return {
         **row,
         "category": category,
@@ -275,16 +414,20 @@ def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict
         "meaning_score": score,
         "meaningfulness": verdict,
         "recommended_action": action,
+        "quality_score": quality_score,
+        "maintenance_priority": maintenance_priority,
+        "quality_reason": quality_reason,
         "days_since_update": days_since_update,
         "flags": "|".join(flags),
     }
 
 
-def summarize(rows: list[dict[str, Any]], handle: str) -> dict[str, Any]:
+def summarize(rows: list[dict[str, Any]], handle: str, data_dir: Path) -> dict[str, Any]:
     action_counts = Counter(row["recommended_action"] for row in rows)
     verdict_counts = Counter(row["meaningfulness"] for row in rows)
     category_counts = Counter(row["category"] for row in rows)
     decision_counts = Counter(row["portfolio_decision"] for row in rows)
+    priority_counts = Counter(row["maintenance_priority"] for row in rows)
     low_signal_rows = [row for row in rows if row["meaningfulness"] in LOW_SIGNAL_VERDICTS]
     low_signal_decision_counts = Counter(row["portfolio_decision"] for row in low_signal_rows)
     total_downloads = sum(to_int(row.get("downloads")) for row in rows)
@@ -306,6 +449,19 @@ def summarize(rows: list[dict[str, Any]], handle: str) -> dict[str, Any]:
         )
         if row["recommended_action"] == "respond_fix_upload"
     ]
+    data_quality = assess_data_quality(
+        rows,
+        handle=handle,
+        data_dir=data_dir,
+        total_downloads=total_downloads,
+        total_stars=total_stars,
+    )
+    destructive_allowed = bool(data_quality.get("destructive_actions_allowed", True))
+    maintenance_queue = quality_maintenance_queue(rows)
+    suppressed_counts = {
+        decision: decision_counts.get(decision, 0)
+        for decision in DESTRUCTIVE_PORTFOLIO_DECISIONS
+    } if not destructive_allowed else {}
 
     return {
         "handle": handle,
@@ -323,9 +479,12 @@ def summarize(rows: list[dict[str, Any]], handle: str) -> dict[str, Any]:
             "category": dict(category_counts),
             "portfolio_decision": dict(decision_counts),
             "low_signal_portfolio_decision": dict(low_signal_decision_counts),
+            "maintenance_priority": dict(priority_counts),
         },
+        "data_quality": data_quality,
         "top_by_score": slim_rows(scored[:25]),
         "top_by_downloads": slim_rows(downloaded[:25]),
+        "quality_maintenance_queue": slim_rows(maintenance_queue[:75]),
         "action_queue": slim_rows(action_queue[:50]),
         "risk_queue": slim_rows(
             [
@@ -335,11 +494,118 @@ def summarize(rows: list[dict[str, Any]], handle: str) -> dict[str, Any]:
             ][:50]
         ),
         "upgrade_queue": slim_rows(queue_for_decision(rows, "upgrade_public")[:50]),
-        "merge_queue": slim_rows(queue_for_decision(rows, "merge_into_stronger_skill")[:50]),
-        "hide_queue": slim_rows(queue_for_decision(rows, "move_private_or_hide")[:50]),
-        "delete_queue": slim_rows(queue_for_decision(rows, "delete_candidate")[:50]),
+        "merge_queue": [] if not destructive_allowed else slim_rows(queue_for_decision(rows, "merge_into_stronger_skill")[:50]),
+        "hide_queue": [] if not destructive_allowed else slim_rows(queue_for_decision(rows, "move_private_or_hide")[:50]),
+        "delete_queue": [] if not destructive_allowed else slim_rows(queue_for_decision(rows, "delete_candidate")[:50]),
         "monitor_queue": slim_rows(queue_for_decision(rows, "monitor")[:50]),
+        "suppressed_destructive_counts": suppressed_counts,
     }
+
+
+def assess_data_quality(
+    rows: list[dict[str, Any]],
+    *,
+    handle: str,
+    data_dir: Path,
+    total_downloads: int,
+    total_stars: int,
+) -> dict[str, Any]:
+    raw_dir = data_dir / "raw"
+    collection_summary = read_json(raw_dir / f"{handle}_collection_summary.json")
+    profile = read_json(raw_dir / f"{handle}_profile.json")
+    profile_stats = profile.get("stats") if isinstance(profile.get("stats"), dict) else {}
+
+    skill_count = len(rows)
+    zero_download_count = sum(1 for row in rows if to_int(row.get("downloads")) == 0)
+    zero_download_rate = round(zero_download_count / skill_count, 4) if skill_count else 0.0
+    detail_error_count = to_int(collection_summary.get("detail_error_count"))
+    detail_success_count = to_int(collection_summary.get("detail_success_count"))
+    detail_total = detail_error_count + detail_success_count
+    detail_error_rate = round(detail_error_count / detail_total, 4) if detail_total else 0.0
+
+    warnings: list[str] = []
+    profile_skill_count = to_int(profile_stats.get("skills") or collection_summary.get("profile_skill_count"))
+    profile_downloads = to_int(profile_stats.get("downloads"))
+    profile_stars = to_int(profile_stats.get("stars"))
+
+    if detail_error_count:
+        warnings.append(
+            f"detail fetch failed for {detail_error_count}/{detail_total or skill_count} skills"
+        )
+    if profile_skill_count and profile_skill_count != skill_count:
+        warnings.append(
+            f"profile skill count {profile_skill_count} differs from collected rows {skill_count}"
+        )
+    if profile_downloads:
+        diff = abs(profile_downloads - total_downloads)
+        if diff / max(1, profile_downloads) >= 0.03:
+            warnings.append(
+                f"profile downloads {profile_downloads} differ from processed downloads {total_downloads}"
+            )
+    if profile_stars and profile_stars != total_stars:
+        warnings.append(
+            f"profile stars {profile_stars} differ from processed stars {total_stars}"
+        )
+    if zero_download_rate >= 0.2 and (detail_error_count or profile_downloads):
+        warnings.append(
+            f"zero-download rows are high: {zero_download_count}/{skill_count}"
+        )
+
+    status = "partial" if warnings else "ok"
+    return {
+        "status": status,
+        "warnings": warnings,
+        "destructive_actions_allowed": status == "ok",
+        "cleanup_actions_allowed": status == "ok",
+        "detail_error_count": detail_error_count,
+        "detail_error_rate": detail_error_rate,
+        "zero_download_count": zero_download_count,
+        "zero_download_rate": zero_download_rate,
+        "profile_downloads": profile_downloads,
+        "processed_downloads": total_downloads,
+        "profile_stars": profile_stars,
+        "processed_stars": total_stars,
+        "collection_started_at_utc": collection_summary.get("started_at_utc", ""),
+        "collection_ended_at_utc": collection_summary.get("ended_at_utc", ""),
+    }
+
+
+def quality_maintenance_queue(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [
+        row
+        for row in rows
+        if (
+            row.get("maintenance_priority") in {"P0_feedback", "P1_maintain", "P2_upgrade"}
+            or row.get("meaningfulness") == "meaningful"
+            or float(row.get("quality_score", 0) or 0) >= 55
+        )
+        and not (
+            row.get("portfolio_decision") in {"delete_candidate", "move_private_or_hide"}
+            and row.get("meaningfulness") in LOW_SIGNAL_VERDICTS
+            and to_int(row.get("installs_all_time")) + to_int(row.get("stars")) + to_int(row.get("comments")) == 0
+        )
+    ]
+    candidates.sort(
+        key=lambda row: (
+            maintenance_priority_rank(row.get("maintenance_priority", "")),
+            -float(row.get("quality_score", 0) or 0),
+            -to_int(row.get("installs_all_time")),
+            -to_int(row.get("stars")),
+            -to_int(row.get("downloads")),
+            row.get("slug", ""),
+        )
+    )
+    return candidates
+
+
+def maintenance_priority_rank(value: str) -> int:
+    return {
+        "P0_feedback": 0,
+        "P1_maintain": 1,
+        "P2_upgrade": 2,
+        "P3_watch": 3,
+        "P4_low_priority": 4,
+    }.get(value, 9)
 
 
 def queue_for_decision(rows: list[dict[str, Any]], decision: str) -> list[dict[str, Any]]:
@@ -370,6 +636,9 @@ def slim_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "meaning_score",
         "meaningfulness",
         "recommended_action",
+        "quality_score",
+        "maintenance_priority",
+        "quality_reason",
         "portfolio_decision",
         "portfolio_reason",
         "merge_family_key",
@@ -501,7 +770,7 @@ def main() -> int:
             -to_int(row.get("downloads")),
         )
     )
-    summary = summarize(analyzed, args.handle)
+    summary = summarize(analyzed, args.handle, data_dir)
     low_signal_triage = [row for row in analyzed if row["meaningfulness"] in LOW_SIGNAL_VERDICTS]
 
     write_csv(data_dir / "processed" / f"{args.handle}_skill_analysis.csv", analyzed)

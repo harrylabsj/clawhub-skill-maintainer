@@ -1,14 +1,16 @@
 {
   "name": "clawhub-skill-maintainer",
-  "version": "1.1.0",
-  "description": "Audit and maintain large ClawHub skill portfolios with stats analysis, bulk-publishing risk cleanup, approval packets, and dashboard reports.",
+  "version": "1.2.0",
+  "description": "Audit and maintain large ClawHub skill portfolios with quality-first maintenance queues, data-quality guardrails, stats analysis, approval packets, and dashboard reports.",
   "author": "Harry",
   "license": "MIT",
   "keywords": [
     "clawhub",
     "openclaw",
     "skill-maintenance",
+    "quality-maintenance",
     "portfolio-audit",
+    "data-quality",
     "bulk-cleanup",
     "approval-workflow",
     "dashboard",
