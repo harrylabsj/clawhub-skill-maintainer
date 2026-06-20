@@ -1,6 +1,6 @@
 ---
 name: clawhub-skill-maintainer
-description: Maintain a large ClawHub skill portfolio with a quality-first lens. Use when the user wants to audit published skills, find high-quality skills worth maintaining, analyze downloads/installs/stars/comments, detect stale or partial data, generate safe upgrade/maintenance queues, handle bulk-publishing account risk, or build/update a ClawHub skill dashboard.
+description: Maintain a large ClawHub skill portfolio with a quality-first and AI-assisted upgrade lens. Use when the user wants to audit published skills, find high-quality skills worth maintaining, analyze downloads/installs/stars/comments, detect stale or partial data, generate safe upgrade/maintenance queues, prepare AI maintainer prompts, handle bulk-publishing account risk, or build/update a ClawHub skill dashboard.
 ---
 
 # ClawHub Skill Maintainer
@@ -40,6 +40,8 @@ Do not run public visibility changes, merge commands, delete commands, or publis
    - Trend summary: `data/processed/<handle>_trend_summary.json`
    - General approval board: `reports/approval_packets/<handle>_approval_board.md`
    - Bulk cleanup board: `reports/bulk_cleanup/<handle>_bulk_approval_board.md`
+   - AI upgrade plan: `reports/auto_upgrade/latest/report.md`
+   - AI maintainer prompts: `reports/auto_upgrade/latest/agent_prompts/`
 
 3. Explain the recommendation to the user in business terms:
 
@@ -54,6 +56,48 @@ Do not run public visibility changes, merge commands, delete commands, or publis
 4. Ask the user to approve one batch at a time using the exact approval phrase shown in the generated approval board.
 
 5. After approval, execute only the approved commands and report the outcome.
+
+## AI Auto Upgrade Loop
+
+Use `scripts/auto_upgrade.py` when the portfolio is too large to maintain manually. The loop selects the next high-quality skills worth improving, inspects local source packages, writes an evidence report, and creates one prompt per candidate for an AI maintainer.
+
+Plan-only mode:
+
+```bash
+python3 scripts/auto_upgrade.py --handle <clawhub-handle> --limit 5
+```
+
+Integrated refresh plus plan:
+
+```bash
+python3 scripts/update_all.py --handle <clawhub-handle> --auto-upgrade-plan --auto-upgrade-limit 5
+```
+
+Fetch missing sources before planning:
+
+```bash
+python3 scripts/auto_upgrade.py --handle <clawhub-handle> --limit 5 --fetch-source
+```
+
+Missing source lookup order is GitHub first, local roots second, and ClawHub install/download fallback last. If GitHub or ClawHub reports a rate limit, stop instead of retrying and run the source fetch later.
+
+Conservative deterministic edits:
+
+```bash
+python3 scripts/auto_upgrade.py --handle <clawhub-handle> --limit 5 --apply-safe
+```
+
+`--apply-safe` is intentionally narrow. It only appends missing example prompts or sensitive-domain safety boundaries to local `SKILL.md` files when the package has no forbidden files and a small file surface. It never publishes, hides, merges, deletes, renames, or changes ownership.
+
+For each generated prompt in `reports/auto_upgrade/latest/agent_prompts/`, run an AI maintainer with these gates:
+
+- preserve the original public contract and slug
+- keep edits small and reviewable
+- look for source on GitHub first; if unavailable, use ClawHub install/download as the fallback
+- add trigger clarity, examples, workflow, validation checks, tags, bilingual search terms, and safety boundaries where useful
+- run validation and dry-run publish before any real publish
+- stop on rate limits, auth errors, data-quality warnings, or missing source
+- require explicit user approval before publishing
 
 ## Quality Maintenance Lens
 

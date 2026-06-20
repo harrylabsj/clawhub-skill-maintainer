@@ -2,7 +2,7 @@ interface:
   display_name: "ClawHub Skill Maintainer"
   short_description: "Find and maintain quality ClawHub skills"
   brand_color: "#2563EB"
-  default_prompt: "Use $clawhub-skill-maintainer to find the ClawHub skills most worth maintaining and generate a safe upgrade plan."
+  default_prompt: "Use $clawhub-skill-maintainer to find the ClawHub skills most worth maintaining, generate an AI-assisted upgrade plan, and keep publish actions gated behind approval."
 
 policy:
   allow_implicit_invocation: true

@@ -21,6 +21,14 @@ def main() -> int:
     parser.add_argument("--detail-concurrency", type=int, default=8)
     parser.add_argument("--skip-details", action="store_true")
     parser.add_argument("--baseline", action="store_true", help="Treat this run as a new snapshot baseline.")
+    parser.add_argument("--auto-upgrade-plan", action="store_true", help="Generate an AI-assisted maintenance plan after analysis.")
+    parser.add_argument("--auto-upgrade-apply-safe", action="store_true", help="Apply deterministic append-only SKILL.md improvements for selected candidates.")
+    parser.add_argument("--auto-upgrade-fetch-source", action="store_true", help="Fetch missing auto-upgrade sources from GitHub first, then ClawHub.")
+    parser.add_argument("--auto-upgrade-limit", type=int, default=5, help="Number of auto-upgrade candidates to plan.")
+    parser.add_argument("--skills-root", default="~/.openclaw/skills", help="Local skill source root for auto-upgrade planning.")
+    parser.add_argument("--extra-skill-root", action="append", default=[], help="Additional local source root for auto-upgrade planning.")
+    parser.add_argument("--source-cache-dir", default=".cache/auto_upgrade_sources", help="Cache directory for fetched auto-upgrade sources.")
+    parser.add_argument("--github-owner", default="", help="GitHub owner to probe for missing auto-upgrade sources; defaults to --handle.")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -106,6 +114,32 @@ def main() -> int:
         ],
         root,
     )
+    if args.auto_upgrade_plan or args.auto_upgrade_apply_safe:
+        auto_upgrade = [
+            sys.executable,
+            str(root / "scripts" / "auto_upgrade.py"),
+            "--handle",
+            args.handle,
+            "--data-dir",
+            str(data_dir),
+            "--skills-root",
+            args.skills_root,
+            "--out-dir",
+            str(report_dir / "auto_upgrade"),
+            "--limit",
+            str(args.auto_upgrade_limit),
+            "--source-cache-dir",
+            args.source_cache_dir,
+        ]
+        if args.github_owner:
+            auto_upgrade.extend(["--github-owner", args.github_owner])
+        for extra_root in args.extra_skill_root:
+            auto_upgrade.extend(["--extra-root", extra_root])
+        if args.auto_upgrade_fetch_source:
+            auto_upgrade.append("--fetch-source")
+        if args.auto_upgrade_apply_safe:
+            auto_upgrade.append("--apply-safe")
+        run(auto_upgrade, root)
     return 0
 
 

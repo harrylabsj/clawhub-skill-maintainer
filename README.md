@@ -17,6 +17,7 @@ Note: the GitHub/local project is named `clawhub-skill-maintainer`, but the Claw
 - Builds a static HTML dashboard with charts, queues, filtering, and sorting.
 - Defines an operating loop for responding to comments, fixing issues, scanning, publishing, and replying.
 - Produces approval-ready evidence packets so a user can approve one small batch at a time.
+- Generates AI-assisted upgrade plans and per-skill maintainer prompts for large portfolios.
 
 ## Run
 
@@ -38,6 +39,46 @@ Output:
 - `reports/action_plans/`: dry-run action plans and commented command files.
 - `reports/approval_packets/`: batch approval board, manifest, and commented commands.
 - `reports/bulk_cleanup/`: clear delisting recommendations from a bulk-publishing account-risk lens.
+- `reports/auto_upgrade/`: AI-assisted maintenance plan, candidate manifest, CSV, and per-skill agent prompts.
+
+## AI-Assisted Maintenance
+
+For portfolios that are too large to maintain manually, generate a small daily upgrade queue:
+
+```bash
+python3 scripts/auto_upgrade.py --handle harrylabsj --limit 5
+```
+
+Or attach the queue to the normal refresh:
+
+```bash
+python3 scripts/update_all.py --handle harrylabsj --auto-upgrade-plan --auto-upgrade-limit 5
+```
+
+To fetch missing sources before writing the plan, use:
+
+```bash
+python3 scripts/auto_upgrade.py --handle harrylabsj --limit 5 --fetch-source
+```
+
+Source lookup order is GitHub first, local source roots second, and ClawHub install/download fallback last. If GitHub or ClawHub returns a rate limit, the script records the error and stops that source path instead of retrying.
+
+Output:
+
+- `reports/auto_upgrade/latest/report.md`: human-readable queue and findings.
+- `reports/auto_upgrade/latest/manifest.json`: machine-readable candidate manifest.
+- `reports/auto_upgrade/latest/candidates.csv`: spreadsheet-friendly candidate table.
+- `reports/auto_upgrade/latest/agent_prompts/<slug>.md`: one safe upgrade prompt per candidate.
+
+The script is plan-only by default. It does not publish, hide, merge, delete, rename, or change ownership.
+
+For narrow deterministic edits, use:
+
+```bash
+python3 scripts/auto_upgrade.py --handle harrylabsj --limit 5 --apply-safe
+```
+
+`--apply-safe` only appends missing example prompts or sensitive-domain safety boundaries to local `SKILL.md` files when the package surface is small and contains no forbidden files. Treat the result as a draft that still needs review, validation, and explicit publish approval.
 
 ## Periodic Update
 
@@ -46,6 +87,14 @@ Use the same command from cron, launchd, GitHub Actions, or a Codex automation. 
 ```cron
 0 9 * * * cd "/Users/jianghaidong/Library/Mobile Documents/com~apple~CloudDocs/codex/clawhub-skill-maintainer" && /usr/bin/python3 scripts/update_all.py --handle harrylabsj >> logs/update.log 2>&1
 ```
+
+To include a daily AI maintenance queue without changing any source files:
+
+```cron
+20 9 * * * cd "/Users/jianghaidong/Library/Mobile Documents/com~apple~CloudDocs/codex/clawhub-skill-maintainer" && /usr/bin/python3 scripts/update_all.py --handle harrylabsj --auto-upgrade-plan --auto-upgrade-limit 5 >> logs/update.log 2>&1
+```
+
+To include source fetching, add `--auto-upgrade-fetch-source`. Use it sparingly if the registry is rate-limiting.
 
 Each update writes a new snapshot, compares it to the previous snapshot, and updates the dashboard's Growth Watch charts:
 
@@ -67,12 +116,13 @@ This archives active snapshots under `data/snapshots/harrylabsj/archive/` and st
 1. Collect fresh data.
 2. Write a snapshot and compare new downloads/installs against the previous run.
 3. Triage skills with comments, installs, stars, high downloads, or strong new growth.
-4. Inspect the source skill and reproduce the issue.
-5. Patch the skill and update README/changelog metadata.
-6. Run `clawhub scan ./path/to/skill`.
-7. Publish with `clawhub publish ./path/to/skill`.
-8. Reply to the user comment with the fix, version, and any limitation.
-9. Consolidate weak duplicate skills into private libraries or stronger public skills.
+4. Generate an auto-upgrade plan and agent prompts for the next small queue.
+5. Inspect the source skill and reproduce the issue.
+6. Patch the skill and update README/changelog metadata.
+7. Run validation and dry-run publish.
+8. Publish with `clawhub publish ./path/to/skill` only after approval.
+9. Reply to the user comment with the fix, version, and any limitation.
+10. Consolidate weak duplicate skills into private libraries or stronger public skills.
 
 ## Current Snapshot
 
