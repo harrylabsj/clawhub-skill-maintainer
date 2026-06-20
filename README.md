@@ -1,4 +1,4 @@
-# ClawHub Skill Maintainer
+# Skill Maintainer
 
 Maintenance dashboard for a ClawHub publisher portfolio.
 

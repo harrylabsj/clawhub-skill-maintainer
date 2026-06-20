@@ -3,7 +3,7 @@ name: clawhub-skill-maintainer
 description: Maintain a large ClawHub skill portfolio with a quality-first and AI-assisted upgrade lens. Use when the user wants to audit published skills, find high-quality skills worth maintaining, analyze downloads/installs/stars/comments, detect stale or partial data, generate safe upgrade/maintenance queues, prepare AI maintainer prompts, handle bulk-publishing account risk, or build/update a ClawHub skill dashboard.
 ---
 
-# ClawHub Skill Maintainer
+# Skill Maintainer
 
 Use this skill to audit and maintain a ClawHub publisher portfolio, especially when the maintainer needs to identify which skills deserve ongoing public investment.
 

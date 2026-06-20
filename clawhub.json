@@ -1,6 +1,6 @@
 {
   "name": "clawhub-skill-maintainer",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Audit and maintain large ClawHub skill portfolios with quality-first maintenance queues, AI-assisted upgrade plans, data-quality guardrails, approval packets, and dashboard reports.",
   "author": "Harry",
   "license": "MIT",

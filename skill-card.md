@@ -35,7 +35,7 @@ Mitigation: Install and run it only for portfolio maintenance workflows, review 
 **Other Properties Related to Output:** [Generated action commands are approval previews and require explicit user approval before execution.] <br>
 
 ## Skill Version(s): <br>
-1.3.0 (source: AI-assisted auto-upgrade planning and safe edit gates) <br>
+1.3.1 (source: display name simplified to Skill Maintainer) <br>
 
 ## Ethical Considerations: <br>
 Users should evaluate whether this skill is appropriate for their environment, review any generated or modified files before relying on them, and apply their organization's safety, security, and compliance requirements before deployment. <br>
