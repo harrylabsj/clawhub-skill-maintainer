@@ -14,6 +14,7 @@ Note: the GitHub/local project is named `clawhub-skill-maintainer`, but the Claw
 - Collects public publisher profile data and all published skill listings.
 - Fetches per-skill stats such as downloads, installs, stars, comments, and versions.
 - Scores each skill with a directional "meaningfulness" score.
+- Separates failed skill-detail fetches into a `data_unavailable` queue that receives no decision for that run.
 - Builds a static HTML dashboard with charts, queues, filtering, and sorting.
 - Defines an operating loop for responding to comments, fixing issues, scanning, publishing, and replying.
 - Produces approval-ready evidence packets so a user can approve one small batch at a time.
@@ -31,6 +32,7 @@ Output:
 - `data/processed/harrylabsj_skills.csv`: normalized skill stats.
 - `data/processed/harrylabsj_skill_analysis.csv`: scored analysis.
 - `data/processed/harrylabsj_low_signal_triage.csv`: low/plausible-low triage decisions.
+- `data/processed/harrylabsj_data_unavailable.csv`: failed detail fetches excluded from today's decisions.
 - `data/processed/harrylabsj_summary.json`: portfolio summary.
 - `data/snapshots/harrylabsj/`: timestamped metric snapshots plus `latest.json`.
 - `data/processed/harrylabsj_skill_growth.csv`: latest per-skill deltas versus the previous snapshot.
@@ -80,6 +82,10 @@ python3 scripts/auto_upgrade.py --handle harrylabsj --limit 5 --apply-safe
 
 `--apply-safe` only appends missing example prompts or sensitive-domain safety boundaries to local `SKILL.md` files when the package surface is small and contains no forbidden files. Treat the result as a draft that still needs review, validation, and explicit publish approval.
 
+## Data Quality Rule
+
+If a skill detail fetch fails, the row is marked `data_unavailable` for that run. It is kept in raw and processed artifacts for visibility, but it is excluded from quality maintenance, upgrade, hide, merge, delete, monitor, bulk-cleanup, and AI candidate-plan decisions until a later collection succeeds.
+
 ## Periodic Update
 
 Use the same command from cron, launchd, GitHub Actions, or a Codex automation. A simple daily cron shape is:
@@ -115,14 +121,15 @@ This archives active snapshots under `data/snapshots/harrylabsj/archive/` and st
 
 1. Collect fresh data.
 2. Write a snapshot and compare new downloads/installs against the previous run.
-3. Triage skills with comments, installs, stars, high downloads, or strong new growth.
-4. Generate a maintenance candidate plan and agent prompts for the next small queue.
-5. Inspect the source skill and reproduce the issue.
-6. Patch the skill and update README/changelog metadata.
-7. Run validation and dry-run publish.
-8. Publish with `clawhub publish ./path/to/skill` only after approval.
-9. Reply to the user comment with the fix, version, and any limitation.
-10. Consolidate weak duplicate skills into private libraries or stronger public skills.
+3. Move failed detail fetches into `data_unavailable` and make no decision for them today.
+4. Triage skills with comments, installs, stars, high downloads, or strong new growth.
+5. Generate a maintenance candidate plan and agent prompts for the next small queue.
+6. Inspect the source skill and reproduce the issue.
+7. Patch the skill and update README/changelog metadata.
+8. Run validation and dry-run publish.
+9. Publish with `clawhub publish ./path/to/skill` only after approval.
+10. Reply to the user comment with the fix, version, and any limitation.
+11. Consolidate weak duplicate skills into private libraries or stronger public skills.
 
 ## Current Snapshot
 
@@ -163,6 +170,8 @@ The second-stage triage answers what to do with low and plausible-low signal ski
 - `delete_candidate`: only for very low-usage, single-version, thin-metadata skills after manual source review.
 
 Direct delete is intentionally conservative. Most low-signal skills should first be hidden, moved private, merged, or upgraded.
+
+Rows marked `data_unavailable` are not low-signal rows. They are blocked by missing detail data and should be re-collected before any portfolio decision.
 
 ## Action Plans
 

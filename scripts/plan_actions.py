@@ -14,6 +14,7 @@ from typing import Any
 
 
 LOW_SIGNAL_VERDICTS = {"low_signal", "plausible_but_low_signal"}
+DATA_UNAVAILABLE = "data_unavailable"
 PUBLIC_UTILITY_CATEGORIES = {"Developer", "Data", "Knowledge", "Automation", "Shopping"}
 DESTRUCTIVE_PLAN_NAMES = {"hide", "merge", "private_backlog"}
 
@@ -74,6 +75,14 @@ def is_low_signal(row: dict[str, Any]) -> bool:
     return row.get("meaningfulness") in LOW_SIGNAL_VERDICTS
 
 
+def is_data_unavailable(row: dict[str, Any]) -> bool:
+    return (
+        row.get("meaningfulness") == DATA_UNAVAILABLE
+        or row.get("recommended_action") == DATA_UNAVAILABLE
+        or row.get("portfolio_decision") == DATA_UNAVAILABLE
+    )
+
+
 def maintenance_priority_rank(value: str) -> int:
     return {
         "P0_feedback": 0,
@@ -81,6 +90,7 @@ def maintenance_priority_rank(value: str) -> int:
         "P2_upgrade": 2,
         "P3_watch": 3,
         "P4_low_priority": 4,
+        "P5_data_unavailable": 5,
     }.get(value, 9)
 
 
@@ -88,9 +98,12 @@ def quality_maintenance_plan(rows: list[dict[str, str]], *, limit: int) -> list[
     candidates = [
         row
         for row in rows
-        if row.get("maintenance_priority") in {"P0_feedback", "P1_maintain", "P2_upgrade"}
-        or to_float(row.get("quality_score")) >= 55
-        or row.get("portfolio_decision") in {"fix_and_reply", "keep_public", "upgrade_public"}
+        if not is_data_unavailable(row)
+        and (
+            row.get("maintenance_priority") in {"P0_feedback", "P1_maintain", "P2_upgrade"}
+            or to_float(row.get("quality_score")) >= 55
+            or row.get("portfolio_decision") in {"fix_and_reply", "keep_public", "upgrade_public"}
+        )
     ]
     candidates.sort(
         key=lambda row: (
@@ -118,6 +131,7 @@ def hide_plan(rows: list[dict[str, str]], *, limit: int, max_downloads: int) -> 
         row
         for row in rows
         if row.get("portfolio_decision") == "move_private_or_hide"
+        and not is_data_unavailable(row)
         and is_low_signal(row)
         and engagement(row) == 0
         and to_int(row.get("downloads")) <= max_downloads
@@ -140,6 +154,7 @@ def private_backlog_plan(rows: list[dict[str, str]], *, limit: int, max_download
         row
         for row in rows
         if row.get("portfolio_decision") == "move_private_or_hide"
+        and not is_data_unavailable(row)
         and is_low_signal(row)
         and engagement(row) == 0
         and (
@@ -162,6 +177,8 @@ def private_backlog_plan(rows: list[dict[str, str]], *, limit: int, max_download
 def merge_plan(rows: list[dict[str, str]], *, limit: int) -> list[dict[str, Any]]:
     families: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
+        if is_data_unavailable(row):
+            continue
         family_key = row.get("merge_family_key", "")
         if family_key:
             families[family_key].append(row)
@@ -172,6 +189,7 @@ def merge_plan(rows: list[dict[str, str]], *, limit: int) -> list[dict[str, Any]
             row
             for row in members
             if row.get("portfolio_decision") == "merge_into_stronger_skill"
+            and not is_data_unavailable(row)
             and is_low_signal(row)
             and engagement(row) == 0
         ]
@@ -224,6 +242,7 @@ def upgrade_plan(rows: list[dict[str, str]], *, limit: int) -> list[dict[str, An
         row
         for row in rows
         if row.get("portfolio_decision") == "upgrade_public"
+        and not is_data_unavailable(row)
         and row.get("meaningfulness") in {"low_signal", "plausible_but_low_signal", "needs_evidence"}
     ]
     candidates.sort(key=lambda row: (-to_int(row.get("downloads")), -to_float(row.get("meaning_score")), row.get("slug", "")))
@@ -243,10 +262,25 @@ def monitor_plan(rows: list[dict[str, str]], *, limit: int) -> list[dict[str, An
         row
         for row in rows
         if row.get("portfolio_decision") == "monitor"
+        and not is_data_unavailable(row)
         and is_low_signal(row)
     ]
     candidates.sort(key=lambda row: (-to_int(row.get("downloads")), -to_float(row.get("meaning_score")), row.get("slug", "")))
     return [plan_row(row, operation="monitor", command="", risk="watch") for row in candidates[:limit]]
+
+
+def data_unavailable_plan(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    candidates = [row for row in rows if is_data_unavailable(row)]
+    candidates.sort(key=lambda row: (row.get("slug", ""), row.get("display_name", "")))
+    return [
+        plan_row(
+            row,
+            operation="data_unavailable",
+            command="",
+            risk="blocked",
+        )
+        for row in candidates
+    ]
 
 
 def plan_row(
@@ -279,6 +313,8 @@ def plan_row(
         "quality_reason": row.get("quality_reason", ""),
         "portfolio_decision": row.get("portfolio_decision", ""),
         "portfolio_reason": row.get("portfolio_reason", ""),
+        "detail_ok": row.get("detail_ok", ""),
+        "detail_error": row.get("detail_error", ""),
         "merge_family_key": row.get("merge_family_key", ""),
         "merge_family_size": row.get("merge_family_size", ""),
         "category": row.get("category", ""),
@@ -497,6 +533,7 @@ def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]
     total_merge = len(plans["merge"])
     total_upgrade = len(plans["upgrade"])
     total_monitor = len(plans["monitor"])
+    total_data_unavailable = len(plans["data_unavailable"])
     quality_status = data_quality.get("status", "unknown")
     quality_warnings = data_quality.get("warnings", [])
     lines = [
@@ -514,11 +551,13 @@ def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]
         f"- merge commands: {total_merge}",
         f"- upgrade inspection queue: {total_upgrade}",
         f"- monitor queue: {total_monitor}",
+        f"- data unavailable: {total_data_unavailable}",
         f"- data quality: {quality_status}",
         "",
         "## Safety Rules",
         "",
         "- Quality maintenance is the default lens; cleanup is secondary.",
+        "- Skills with failed detail fetches are separated into `data_unavailable` and receive no decision today.",
         "- When data quality is partial, cleanup plans are suppressed and only non-destructive review queues remain.",
         "- Hide before delete. Current ClawHub CLI exposes `hide/unhide`, not a dedicated skill-private mode.",
         "- Generated shell files keep commands commented out by default.",
@@ -537,6 +576,7 @@ def write_markdown(path: Path, handle: str, plans: dict[str, list[dict[str, Any]
     lines.extend(markdown_table("Merge Candidates", plans["merge"], ["slug", "target_slug", "merge_family_key", "downloads", "meaning_score"]))
     lines.extend(markdown_table("Upgrade Candidates", plans["upgrade"], ["slug", "downloads", "meaning_score", "category", "portfolio_reason"]))
     lines.extend(markdown_table("Monitor Candidates", plans["monitor"], ["slug", "downloads", "meaning_score", "category", "portfolio_reason"]))
+    lines.extend(markdown_table("Data Unavailable - No Decision Today", plans["data_unavailable"], ["slug", "detail_ok", "detail_error", "portfolio_reason"]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -590,6 +630,7 @@ def main() -> int:
         "merge": merge_plan(rows, limit=args.merge_limit),
         "upgrade": upgrade_plan(rows, limit=args.upgrade_limit),
         "monitor": monitor_plan(rows, limit=args.monitor_limit),
+        "data_unavailable": data_unavailable_plan(rows),
     }
     suppressed_counts = {name: len(plans[name]) for name in DESTRUCTIVE_PLAN_NAMES}
     if not destructive_allowed:

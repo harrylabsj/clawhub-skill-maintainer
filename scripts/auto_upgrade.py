@@ -28,7 +28,10 @@ PRIORITY_RANK = {
     "P2_upgrade": 2,
     "P3_watch": 3,
     "P4_low_priority": 4,
+    "P5_data_unavailable": 5,
 }
+
+DATA_UNAVAILABLE = "data_unavailable"
 
 FORBIDDEN_PACKAGE_NAMES = {
     ".env",
@@ -258,12 +261,29 @@ def load_recent_slugs(path: Path) -> set[str]:
 
 
 def should_skip_candidate(row: dict[str, Any]) -> bool:
+    if is_data_unavailable(row) or not is_detail_available(row):
+        return True
     decision = row.get("portfolio_decision", "")
     if decision in {"delete_candidate", "move_private_or_hide", "merge_into_stronger_skill"}:
         engagement = to_int(row.get("installs_all_time")) + to_int(row.get("stars")) + to_int(row.get("comments"))
         if engagement == 0 and row.get("meaningfulness") in {"low_signal", "plausible_but_low_signal"}:
             return True
     return False
+
+
+def is_data_unavailable(row: dict[str, Any]) -> bool:
+    return (
+        row.get("meaningfulness") == DATA_UNAVAILABLE
+        or row.get("recommended_action") == DATA_UNAVAILABLE
+        or row.get("portfolio_decision") == DATA_UNAVAILABLE
+    )
+
+
+def is_detail_available(row: dict[str, Any]) -> bool:
+    value = str(row.get("detail_ok", "")).strip().lower()
+    if value:
+        return value in {"true", "1", "yes", "ok"}
+    return not str(row.get("detail_error", "")).strip()
 
 
 def candidate_sort_key(row: dict[str, Any]) -> tuple[int, float, int, int, int, str]:

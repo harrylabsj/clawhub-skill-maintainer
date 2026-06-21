@@ -1,6 +1,6 @@
 {
   "name": "clawhub-skill-maintainer-skill",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Audit and maintain large ClawHub skill portfolios with quality-first queues and AI-assisted candidate plans.",
   "main": "SKILL.md",
   "scripts": {},

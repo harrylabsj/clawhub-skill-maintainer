@@ -38,10 +38,12 @@ DECISION_RANKS = {
     "delete_candidate": 50,
     "monitor": 60,
     "keep_public": 70,
+    "data_unavailable": 90,
 }
 
 
 LOW_SIGNAL_VERDICTS = {"low_signal", "plausible_but_low_signal"}
+DATA_UNAVAILABLE = "data_unavailable"
 PUBLIC_UTILITY_CATEGORIES = {"Developer", "Data", "Knowledge", "Automation", "Shopping"}
 QUALITY_SIGNAL_CATEGORIES = PUBLIC_UTILITY_CATEGORIES | {
     "Business",
@@ -105,6 +107,21 @@ def read_json(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def is_detail_available(row: dict[str, Any]) -> bool:
+    value = str(row.get("detail_ok", "")).strip().lower()
+    if value:
+        return value in {"true", "1", "yes", "ok"}
+    return not str(row.get("detail_error", "")).strip()
+
+
+def is_data_unavailable(row: dict[str, Any]) -> bool:
+    return (
+        row.get("meaningfulness") == DATA_UNAVAILABLE
+        or row.get("recommended_action") == DATA_UNAVAILABLE
+        or row.get("portfolio_decision") == DATA_UNAVAILABLE
+    )
 
 
 def normalize_text(*parts: str) -> str:
@@ -284,6 +301,28 @@ def maintenance_priority_for(
     return "P4_low_priority"
 
 
+def unavailable_score_row(row: dict[str, str], *, category: str, dup_key: str, duplicate_size: int) -> dict[str, Any]:
+    detail_error = str(row.get("detail_error", "")).strip() or "detail_fetch_failed"
+    return {
+        **row,
+        "category": category,
+        "duplicate_key": dup_key,
+        "duplicate_family_size": duplicate_size,
+        "usage_score": 0.0,
+        "maintenance_score": 0.0,
+        "content_score": 0.0,
+        "duplicate_penalty": 0.0,
+        "meaning_score": 0.0,
+        "meaningfulness": DATA_UNAVAILABLE,
+        "recommended_action": DATA_UNAVAILABLE,
+        "quality_score": 0.0,
+        "maintenance_priority": "P5_data_unavailable",
+        "quality_reason": "detail_fetch_failed",
+        "days_since_update": 9999,
+        "flags": f"detail_fetch_failed|{detail_error}",
+    }
+
+
 def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict[str, int], now: datetime) -> dict[str, Any]:
     downloads = to_int(row.get("downloads"))
     installs = to_int(row.get("installs_all_time"))
@@ -297,6 +336,9 @@ def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict
     category = category_for(row)
     dup_key = duplicate_key(row.get("slug", ""))
     duplicate_size = duplicate_sizes.get(dup_key, 1)
+
+    if not is_detail_available(row):
+        return unavailable_score_row(row, category=category, dup_key=dup_key, duplicate_size=duplicate_size)
 
     usage_score = (
         safe_log_score(downloads, maxima["downloads"], 28)
@@ -423,6 +465,8 @@ def score_row(row: dict[str, str], maxima: dict[str, int], duplicate_sizes: dict
 
 
 def summarize(rows: list[dict[str, Any]], handle: str, data_dir: Path) -> dict[str, Any]:
+    data_unavailable_rows = [row for row in rows if is_data_unavailable(row)]
+    decisionable_rows = [row for row in rows if not is_data_unavailable(row)]
     action_counts = Counter(row["recommended_action"] for row in rows)
     verdict_counts = Counter(row["meaningfulness"] for row in rows)
     category_counts = Counter(row["category"] for row in rows)
@@ -434,6 +478,12 @@ def summarize(rows: list[dict[str, Any]], handle: str, data_dir: Path) -> dict[s
     total_installs = sum(to_int(row.get("installs_all_time")) for row in rows)
     total_stars = sum(to_int(row.get("stars")) for row in rows)
     total_comments = sum(to_int(row.get("comments")) for row in rows)
+    decisionable_totals = {
+        "downloads": sum(to_int(row.get("downloads")) for row in decisionable_rows),
+        "installs_all_time": sum(to_int(row.get("installs_all_time")) for row in decisionable_rows),
+        "stars": sum(to_int(row.get("stars")) for row in decisionable_rows),
+        "comments": sum(to_int(row.get("comments")) for row in decisionable_rows),
+    }
     scored = sorted(rows, key=lambda row: float(row["meaning_score"]), reverse=True)
     downloaded = sorted(rows, key=lambda row: to_int(row.get("downloads")), reverse=True)
     action_queue = [
@@ -467,12 +517,15 @@ def summarize(rows: list[dict[str, Any]], handle: str, data_dir: Path) -> dict[s
         "handle": handle,
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "skill_count": len(rows),
+        "decisionable_skill_count": len(decisionable_rows),
+        "data_unavailable_count": len(data_unavailable_rows),
         "totals": {
             "downloads": total_downloads,
             "installs_all_time": total_installs,
             "stars": total_stars,
             "comments": total_comments,
         },
+        "decisionable_totals": decisionable_totals,
         "counts": {
             "recommended_action": dict(action_counts),
             "meaningfulness": dict(verdict_counts),
@@ -485,6 +538,7 @@ def summarize(rows: list[dict[str, Any]], handle: str, data_dir: Path) -> dict[s
         "top_by_score": slim_rows(scored[:25]),
         "top_by_downloads": slim_rows(downloaded[:25]),
         "quality_maintenance_queue": slim_rows(maintenance_queue[:75]),
+        "data_unavailable_queue": slim_rows(sorted(data_unavailable_rows, key=lambda row: row.get("slug", ""))[:150]),
         "action_queue": slim_rows(action_queue[:50]),
         "risk_queue": slim_rows(
             [
@@ -516,6 +570,7 @@ def assess_data_quality(
     profile_stats = profile.get("stats") if isinstance(profile.get("stats"), dict) else {}
 
     skill_count = len(rows)
+    data_unavailable_count = sum(1 for row in rows if is_data_unavailable(row))
     zero_download_count = sum(1 for row in rows if to_int(row.get("downloads")) == 0)
     zero_download_rate = round(zero_download_count / skill_count, 4) if skill_count else 0.0
     detail_error_count = to_int(collection_summary.get("detail_error_count"))
@@ -531,6 +586,10 @@ def assess_data_quality(
     if detail_error_count:
         warnings.append(
             f"detail fetch failed for {detail_error_count}/{detail_total or skill_count} skills"
+        )
+    if data_unavailable_count:
+        warnings.append(
+            f"{data_unavailable_count} skills marked data_unavailable and excluded from today's decisions"
         )
     if profile_skill_count and profile_skill_count != skill_count:
         warnings.append(
@@ -559,6 +618,8 @@ def assess_data_quality(
         "cleanup_actions_allowed": status == "ok",
         "detail_error_count": detail_error_count,
         "detail_error_rate": detail_error_rate,
+        "data_unavailable_count": data_unavailable_count,
+        "decisionable_skill_count": skill_count - data_unavailable_count,
         "zero_download_count": zero_download_count,
         "zero_download_rate": zero_download_rate,
         "profile_downloads": profile_downloads,
@@ -574,7 +635,8 @@ def quality_maintenance_queue(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     candidates = [
         row
         for row in rows
-        if (
+        if not is_data_unavailable(row)
+        and (
             row.get("maintenance_priority") in {"P0_feedback", "P1_maintain", "P2_upgrade"}
             or row.get("meaningfulness") == "meaningful"
             or float(row.get("quality_score", 0) or 0) >= 55
@@ -605,6 +667,7 @@ def maintenance_priority_rank(value: str) -> int:
         "P2_upgrade": 2,
         "P3_watch": 3,
         "P4_low_priority": 4,
+        "P5_data_unavailable": 5,
     }.get(value, 9)
 
 
@@ -641,6 +704,8 @@ def slim_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "quality_reason",
         "portfolio_decision",
         "portfolio_reason",
+        "detail_ok",
+        "detail_error",
         "merge_family_key",
         "merge_family_size",
         "merge_target_slug",
@@ -653,11 +718,17 @@ def slim_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def apply_portfolio_triage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     family_counts: Counter[str] = Counter()
     for row in rows:
+        if is_data_unavailable(row):
+            continue
         for kind, key in family_candidates(row.get("slug", "")):
             family_counts[f"{kind}:{key}"] += 1
 
     family_members: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
+        if is_data_unavailable(row):
+            row["merge_family_key"] = ""
+            row["merge_family_size"] = 1
+            continue
         family_key = choose_family_key(row.get("slug", ""), family_counts)
         row["merge_family_key"] = family_key
         row["merge_family_size"] = family_counts.get(family_key, 1) if family_key else 1
@@ -678,6 +749,12 @@ def apply_portfolio_triage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
 
     for row in rows:
+        if is_data_unavailable(row):
+            row["merge_target_slug"] = ""
+            row["portfolio_decision"] = DATA_UNAVAILABLE
+            row["portfolio_reason"] = "Skill detail fetch failed; exclude from today's decisions and retry collection later."
+            row["portfolio_rank"] = DECISION_RANKS[DATA_UNAVAILABLE]
+            continue
         family_key = row.get("merge_family_key", "")
         target_slug = ""
         if family_key:
@@ -772,9 +849,11 @@ def main() -> int:
     )
     summary = summarize(analyzed, args.handle, data_dir)
     low_signal_triage = [row for row in analyzed if row["meaningfulness"] in LOW_SIGNAL_VERDICTS]
+    data_unavailable = [row for row in analyzed if is_data_unavailable(row)]
 
     write_csv(data_dir / "processed" / f"{args.handle}_skill_analysis.csv", analyzed)
     write_csv(data_dir / "processed" / f"{args.handle}_low_signal_triage.csv", low_signal_triage)
+    write_csv(data_dir / "processed" / f"{args.handle}_data_unavailable.csv", data_unavailable)
     write_json(data_dir / "processed" / f"{args.handle}_summary.json", summary)
     print(json.dumps(summary["totals"], indent=2))
     print(json.dumps(summary["counts"]["recommended_action"], indent=2))

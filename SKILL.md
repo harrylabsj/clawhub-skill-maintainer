@@ -35,6 +35,7 @@ Do not run public visibility changes, merge commands, delete commands, or publis
    - Scored analysis: `data/processed/<handle>_skill_analysis.csv`
    - Summary and quality queue: `data/processed/<handle>_summary.json`
    - Low-signal triage: `data/processed/<handle>_low_signal_triage.csv`
+   - Data unavailable queue: `data/processed/<handle>_data_unavailable.csv`
    - Latest snapshot: `data/snapshots/<handle>/latest.json`
    - Growth deltas: `data/processed/<handle>_skill_growth.csv`
    - Trend summary: `data/processed/<handle>_trend_summary.json`
@@ -50,6 +51,7 @@ Do not run public visibility changes, merge commands, delete commands, or publis
    - what should stay public
    - what should be upgraded
    - what cleanup was suppressed because the data is partial
+   - which skills had failed detail fetches and therefore get no decision today
    - what should be hidden or merged only after explicit cleanup review
    - what should be monitored
 
@@ -118,6 +120,8 @@ When a skill has quality signal, recommend concrete upgrades before any visibili
 Treat the run as `partial` when profile totals and processed totals diverge, many detail requests fail, many rows are unexpectedly zero-download, the report falls back to cache, or deltas are negative. In partial mode:
 
 - keep quality maintenance, upgrade, and monitor queues
+- move failed skill-detail fetches into `data_unavailable`
+- exclude `data_unavailable` skills from keep, upgrade, hide, merge, delete, monitor, bulk-cleanup, and AI maintenance candidate decisions for that day
 - suppress hide, merge, delete, and bulk-cleanup approval batches
 - tell the user which warning caused suppression
 - refresh data later instead of retrying aggressively during rate limits
@@ -198,6 +202,7 @@ Use `--baseline` when the account has materially changed and the next run should
 
 - Never execute hide, merge, delete, or publish actions merely because a report recommends them.
 - Never execute hide, merge, or delete actions when `data_quality.status` is `partial`.
+- Never make maintenance, cleanup, or publish decisions from rows marked `data_unavailable`; retry collection later.
 - Never batch-hide skills with installs, stars, comments, or strong usage without manual review.
 - Do not treat zero downloads as evidence when detail fetches failed or profile totals disagree with processed totals.
 - Use hide/private-style cleanup before deletion.

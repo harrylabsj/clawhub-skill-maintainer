@@ -20,7 +20,7 @@ Global <br>
 Risk: The skill can recommend public visibility, publish, rescan, or merge actions that affect a ClawHub portfolio. <br>
 Mitigation: Review generated approval boards carefully and execute only the exact batch explicitly approved by the user; cleanup batches are suppressed when data quality is partial, and merge batches remain higher risk because reversibility is not established. <br>
 Risk: The skill gathers ClawHub portfolio data and writes local reports and snapshots. <br>
-Mitigation: Install and run it only for portfolio maintenance workflows, review local generated artifacts before acting on them, and clearly state when network or authentication limits the analysis. <br>
+Mitigation: Install and run it only for portfolio maintenance workflows, review local generated artifacts before acting on them, and treat failed skill-detail fetches as data_unavailable with no decision until a later collection succeeds. <br>
 
 
 ## Reference(s): <br>
@@ -35,7 +35,7 @@ Mitigation: Install and run it only for portfolio maintenance workflows, review 
 **Other Properties Related to Output:** [Generated action commands are approval previews and require explicit user approval before execution.] <br>
 
 ## Skill Version(s): <br>
-1.3.2 (source: plan-only maintenance wording, HTML slug protection, and chart fallback) <br>
+1.3.3 (source: separates failed detail fetches into data_unavailable and excludes them from daily maintenance decisions) <br>
 
 ## Ethical Considerations: <br>
 Users should evaluate whether this skill is appropriate for their environment, review any generated or modified files before relying on them, and apply their organization's safety, security, and compliance requirements before deployment. <br>

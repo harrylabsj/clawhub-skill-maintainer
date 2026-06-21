@@ -14,6 +14,7 @@ from typing import Any
 
 
 LOW_SIGNAL_VERDICTS = {"low_signal", "plausible_but_low_signal"}
+DATA_UNAVAILABLE = "data_unavailable"
 
 
 def to_int(value: Any) -> int:
@@ -64,11 +65,21 @@ def engagement(row: dict[str, Any]) -> int:
     return to_int(row.get("installs_all_time")) + to_int(row.get("stars")) + to_int(row.get("comments"))
 
 
+def is_data_unavailable(row: dict[str, Any]) -> bool:
+    return (
+        row.get("meaningfulness") == DATA_UNAVAILABLE
+        or row.get("recommended_action") == DATA_UNAVAILABLE
+        or row.get("portfolio_decision") == DATA_UNAVAILABLE
+    )
+
+
 def command_quote(*parts: str) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
 def bulk_risk_features(row: dict[str, str]) -> tuple[int, list[str]]:
+    if is_data_unavailable(row):
+        return 0, ["detail_fetch_failed"]
     features: list[str] = []
     score = 0
     if row.get("meaningfulness") in LOW_SIGNAL_VERDICTS:
@@ -104,6 +115,12 @@ def bulk_risk_features(row: dict[str, str]) -> tuple[int, list[str]]:
 
 
 def phase_for(row: dict[str, str]) -> tuple[str, str, str]:
+    if is_data_unavailable(row):
+        return (
+            "data_unavailable",
+            "No decision today",
+            "Skill detail fetch failed; retry data collection before any keep, upgrade, hide, merge, or delete decision.",
+        )
     zero_engagement = engagement(row) == 0
     single_version = to_int(row.get("versions")) <= 1
     low_signal = row.get("meaningfulness") in LOW_SIGNAL_VERDICTS
@@ -174,6 +191,8 @@ def build_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "meaningfulness": row.get("meaningfulness", ""),
                 "category": row.get("category", ""),
                 "portfolio_decision": row.get("portfolio_decision", ""),
+                "detail_ok": row.get("detail_ok", ""),
+                "detail_error": row.get("detail_error", ""),
                 "merge_family_key": row.get("merge_family_key", ""),
                 "merge_family_size": row.get("merge_family_size", ""),
                 "merge_target_slug": row.get("merge_target_slug", ""),
@@ -199,6 +218,7 @@ def phase_rank(phase: str) -> int:
         "phase3_upgrade_or_hide": 30,
         "phase4_merge_or_hide": 40,
         "phase5_review_later": 50,
+        "data_unavailable": 80,
         "not_delist_now": 90,
     }
     return order.get(phase, 999)
@@ -248,12 +268,13 @@ def suppress_cleanup_for_partial_data(planned: list[dict[str, Any]], data_qualit
     suppressed: list[dict[str, Any]] = []
     for row in planned:
         copy = dict(row)
-        copy["phase"] = "not_delist_now"
-        copy["recommendation"] = "Do not delist while data is partial"
-        copy["reason"] = reason
-        copy["command"] = ""
+        if copy.get("phase") != "data_unavailable":
+            copy["phase"] = "not_delist_now"
+            copy["recommendation"] = "Do not delist while data is partial"
+            copy["reason"] = reason
+            copy["command"] = ""
         suppressed.append(copy)
-    suppressed.sort(key=lambda row: (-to_int(row.get("downloads")), row.get("slug", "")))
+    suppressed.sort(key=lambda row: (phase_rank(row["phase"]), -to_int(row.get("downloads")), row.get("slug", "")))
     return suppressed
 
 
@@ -368,6 +389,7 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]], data_qu
     phase2 = [row for row in planned if row["phase"] == "phase2_hide_after_spotcheck"]
     phase3 = [row for row in planned if row["phase"] == "phase3_upgrade_or_hide"]
     phase4 = [row for row in planned if row["phase"] == "phase4_merge_or_hide"]
+    data_unavailable = [row for row in planned if row["phase"] == "data_unavailable"]
     lines = [
         f"# Bulk Cleanup Recommendation - {handle}",
         "",
@@ -382,6 +404,7 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]], data_qu
         f"- Spot-check then hide phase 2: {len(phase2)} skills.",
         f"- Upgrade within 7 days or hide phase 3: {len(phase3)} skills.",
         f"- Merge or hide repeated families phase 4: {len(phase4)} skills.",
+        f"- Data unavailable, no decision today: {len(data_unavailable)} skills.",
         "",
         "The strongest account-risk pattern is: low/plausible-low signal + single version + zero installs/stars/comments. The count varies by portfolio state.",
         "",
@@ -400,6 +423,7 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]], data_qu
         "phase3_upgrade_or_hide",
         "phase4_merge_or_hide",
         "phase5_review_later",
+        "data_unavailable",
         "not_delist_now",
     ]:
         lines.append(f"- {phase}: {counts.get(phase, 0)}")
@@ -407,6 +431,7 @@ def write_report(path: Path, handle: str, planned: list[dict[str, Any]], data_qu
     lines.extend(phase_table("Phase 2 Hide After Spot-Check", phase2, limit=30))
     lines.extend(phase_table("Phase 3 Upgrade Or Hide", phase3, limit=30))
     lines.extend(phase_table("Phase 4 Merge Or Hide", phase4, limit=30))
+    lines.extend(phase_table("Data Unavailable - No Decision Today", data_unavailable, limit=40))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

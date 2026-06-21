@@ -50,6 +50,7 @@ ACTION_LABELS = {
     "curate_or_improve": "Curate / Improve",
     "review_for_merge_or_private": "Review Merge / Private",
     "consider_private_or_delete": "Private / Delete Candidate",
+    "data_unavailable": "Data Unavailable",
 }
 
 
@@ -58,6 +59,7 @@ VERDICT_LABELS = {
     "needs_evidence": "Needs Evidence",
     "plausible_but_low_signal": "Plausible, Low Signal",
     "low_signal": "Low Signal",
+    "data_unavailable": "Data Unavailable",
 }
 
 
@@ -69,6 +71,7 @@ DECISION_LABELS = {
     "delete_candidate": "Delete Candidate",
     "monitor": "Monitor",
     "keep_public": "Keep Public",
+    "data_unavailable": "Data Unavailable",
 }
 
 
@@ -153,6 +156,8 @@ def clean_row(row: dict[str, str], handle: str) -> dict[str, Any]:
         "action": row.get("recommended_action", ""),
         "decision": row.get("portfolio_decision", ""),
         "decision_reason": row.get("portfolio_reason", ""),
+        "detail_ok": row.get("detail_ok", ""),
+        "detail_error": row.get("detail_error", ""),
         "category": row.get("category", "Other"),
         "family": row.get("merge_family_key", ""),
         "family_size": to_int(row.get("merge_family_size")),
@@ -173,10 +178,11 @@ def save_action_chart(rows: list[dict[str, str]], path: Path) -> None:
         "curate_or_improve",
         "review_for_merge_or_private",
         "consider_private_or_delete",
+        "data_unavailable",
     ]
     values = [counts.get(key, 0) for key in keys]
     labels = [ACTION_LABELS[key] for key in keys]
-    colors = [PALETTE["red"], PALETTE["green"], PALETTE["teal"], PALETTE["amber"], PALETTE["slate"]]
+    colors = [PALETTE["red"], PALETTE["green"], PALETTE["teal"], PALETTE["amber"], PALETTE["slate"], PALETTE["violet"]]
 
     fig, ax = plt.subplots(figsize=(10, 4.8), dpi=160)
     bars = ax.bar(labels, values, color=colors)
@@ -376,6 +382,8 @@ def render_html(
     decision_counts = counts.get("portfolio_decision", {})
     low_decision_counts = counts.get("low_signal_portfolio_decision", {})
     low_signal_count = verdict_counts.get("low_signal", 0) + verdict_counts.get("plausible_but_low_signal", 0)
+    data_unavailable_count = summary.get("data_unavailable_count", verdict_counts.get("data_unavailable", 0))
+    decisionable_skill_count = summary.get("decisionable_skill_count", max(0, to_int(summary.get("skill_count")) - to_int(data_unavailable_count)))
     generated = summary.get("generated_at_utc", "")
     top_score = sorted(clean_rows, key=lambda row: row["score"], reverse=True)[:8]
     action_queue = [
@@ -387,6 +395,11 @@ def render_html(
         row
         for row in sorted(clean_rows, key=lambda row: (row["score"], row["downloads"]))
         if row["action"] in {"review_for_merge_or_private", "consider_private_or_delete"}
+    ][:8]
+    data_unavailable_queue = [
+        row
+        for row in sorted(clean_rows, key=lambda row: (row["slug"], row["display_name"]))
+        if row["decision"] == "data_unavailable" or row["action"] == "data_unavailable" or row["verdict"] == "data_unavailable"
     ][:8]
     upgrade_queue = [row for row in sorted(clean_rows, key=lambda row: (-row["downloads"], -row["score"])) if row["decision"] == "upgrade_public" and row["verdict"] in {"low_signal", "plausible_but_low_signal"}][:8]
     merge_queue = [row for row in sorted(clean_rows, key=lambda row: (-row["family_size"], -row["downloads"], -row["score"])) if row["decision"] == "merge_into_stronger_skill" and row["verdict"] in {"low_signal", "plausible_but_low_signal"}][:8]
@@ -484,7 +497,7 @@ def render_html(
     .stamp {{ justify-self: end; text-align: right; color: rgba(255,255,255,.72); font-size: 13px; line-height: 1.7; }}
     .stamp strong {{ color: #fff; }}
     main {{ padding: 24px 0 48px; }}
-    .kpis {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: -48px; }}
+    .kpis {{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-top: -48px; }}
     .card {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -549,6 +562,7 @@ def render_html(
     .pill.action-curate_or_improve {{ background: #e5f3f5; color: #166677; }}
     .pill.action-review_for_merge_or_private {{ background: #fff2d7; color: #845b12; }}
     .pill.action-consider_private_or_delete {{ background: #e9edf2; color: #44546a; }}
+    .pill.action-data_unavailable {{ background: #eeeafc; color: #5642c6; }}
     .pill.decision-fix_and_reply {{ background: #ffe8e6; color: #9c3838; }}
     .pill.decision-upgrade_public {{ background: #e7f3e8; color: #356f44; }}
     .pill.decision-merge_into_stronger_skill {{ background: #fff2d7; color: #845b12; }}
@@ -556,6 +570,7 @@ def render_html(
     .pill.decision-delete_candidate {{ background: #f7dedc; color: #9c3838; }}
     .pill.decision-monitor {{ background: #e5f3f5; color: #166677; }}
     .pill.decision-keep_public {{ background: #edf7ea; color: #356f44; }}
+    .pill.decision-data_unavailable {{ background: #eeeafc; color: #5642c6; }}
     .workflow {{ padding: 18px; }}
     .workflow ol {{ margin: 8px 0 0; padding-left: 22px; color: var(--muted); line-height: 1.65; }}
     .workflow strong {{ color: var(--ink); }}
@@ -599,12 +614,13 @@ def render_html(
 
   <main class="shell">
     <div class="kpis">
-      <div class="card kpi"><span>Skills</span><strong>{fmt_num(summary.get("skill_count"))}</strong><em>public skill portfolio</em></div>
+      <div class="card kpi"><span>Skills</span><strong>{fmt_num(summary.get("skill_count"))}</strong><em>{fmt_num(decisionable_skill_count)} decisionable today</em></div>
       <div class="card kpi"><span>Low Signal</span><strong>{fmt_num(low_signal_count)}</strong><em>low + plausible-low</em></div>
       <div class="card kpi"><span>Upgrade</span><strong>{fmt_num(low_decision_counts.get("upgrade_public", 0))}</strong><em>keep public, improve</em></div>
       <div class="card kpi"><span>Merge</span><strong>{fmt_num(low_decision_counts.get("merge_into_stronger_skill", 0))}</strong><em>consolidate family</em></div>
       <div class="card kpi"><span>Private/Hide</span><strong>{fmt_num(low_decision_counts.get("move_private_or_hide", 0))}</strong><em>remove public noise</em></div>
       <div class="card kpi"><span>Monitor</span><strong>{fmt_num(low_decision_counts.get("monitor", 0))}</strong><em>recheck later</em></div>
+      <div class="card kpi"><span>Data Unavailable</span><strong>{fmt_num(data_unavailable_count)}</strong><em>no decision today</em></div>
     </div>
 
     <section>
@@ -654,9 +670,9 @@ def render_html(
     <section>
       <div class="section-title">
         <h2>Maintenance Queues</h2>
-        <p>Commented skills get the first queue because they represent active user feedback. Public winners and low-signal candidates are separated so review work stays focused.</p>
+        <p>Commented skills get the first queue because they represent active user feedback. Failed detail fetches are separated so they do not drive maintenance decisions.</p>
       </div>
-      <div class="grid-3">
+      <div class="grid-4">
         <div class="card queue">
           <h3>Respond / Fix / Upload</h3>
           {mini_list(action_queue, "comments")}
@@ -668,6 +684,10 @@ def render_html(
         <div class="card queue">
           <h3>Review / Private Candidates</h3>
           {mini_list(risk_queue, "score")}
+        </div>
+        <div class="card queue">
+          <h3>Data Unavailable</h3>
+          {mini_list(data_unavailable_queue, "downloads")}
         </div>
       </div>
     </section>
@@ -747,6 +767,7 @@ def render_html(
         <ol>
           <li><strong>Collect:</strong> refresh profile, listing, and skill detail stats with <code>scripts/update_all.py</code>.</li>
           <li><strong>Snapshot:</strong> save the latest metric snapshot and compare it with the previous run to find new download and install growth.</li>
+          <li><strong>Gate:</strong> move failed skill-detail fetches into <code>data_unavailable</code> and make no decision for them today.</li>
           <li><strong>Triage:</strong> start with skills that have comments, installs, stars, or unusually high downloads.</li>
           <li><strong>Fix:</strong> inspect the source skill, reproduce the reported problem, patch the skill, and update README/changelog metadata.</li>
           <li><strong>Validate:</strong> run <code>clawhub scan ./path/to/skill</code> before publishing.</li>
@@ -765,6 +786,8 @@ def render_html(
           <a href="approval_packets/{html.escape(handle)}_approval_commands.sh">Approval Commands<small>commented by default</small></a>
           <a href="../data/processed/{html.escape(handle)}_skill_growth.csv">Growth CSV<small>new downloads and installs</small></a>
           <a href="../data/processed/{html.escape(handle)}_trend_summary.json">Trend Summary<small>latest versus previous snapshot</small></a>
+          <a href="../data/processed/{html.escape(handle)}_data_unavailable.csv">Data Unavailable CSV<small>failed detail fetches, no decision today</small></a>
+          <a href="action_plans/{html.escape(handle)}_data_unavailable_plan.csv">Data Unavailable Plan<small>blocked queue only</small></a>
           <a href="bulk_cleanup/{html.escape(handle)}_bulk_cleanup_report.md">Bulk Cleanup Report<small>clear delisting recommendation</small></a>
           <a href="bulk_cleanup/{html.escape(handle)}_bulk_approval_board.md">Bulk Approval Board<small>approve delisting phases</small></a>
           <a href="bulk_cleanup/{html.escape(handle)}_bulk_approval_manifest.json">Bulk Approval Manifest<small>phase evidence JSON</small></a>
