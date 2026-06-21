@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan and gate AI-assisted upgrades for a large ClawHub skill portfolio.
+"""Plan and gate AI-assisted maintenance candidates for a large ClawHub skill portfolio.
 
 This script is intentionally conservative. By default it only selects the next
 skills worth maintaining, inspects local source packages, writes an evidence
@@ -668,7 +668,7 @@ def write_prompt_files(run_dir: Path, candidates: list[dict[str, Any]]) -> None:
 def write_report(run_dir: Path, handle: str, candidates: list[dict[str, Any]], summary: dict[str, Any], source_roots: list[Path]) -> None:
     data_quality = summary.get("data_quality") if isinstance(summary.get("data_quality"), dict) else {}
     lines = [
-        f"# Auto Upgrade Plan - {handle}",
+        f"# Maintenance Candidate Plan - {handle}",
         "",
         f"Generated: {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
         f"Data quality: `{data_quality.get('status', 'unknown')}`",

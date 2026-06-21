@@ -57,9 +57,9 @@ Do not run public visibility changes, merge commands, delete commands, or publis
 
 5. After approval, execute only the approved commands and report the outcome.
 
-## AI Auto Upgrade Loop
+## AI Maintenance Candidate Plan
 
-Use `scripts/auto_upgrade.py` when the portfolio is too large to maintain manually. The loop selects the next high-quality skills worth improving, inspects local source packages, writes an evidence report, and creates one prompt per candidate for an AI maintainer.
+Use `scripts/auto_upgrade.py` when the portfolio is too large to maintain manually. The loop selects the next high-quality skills worth reviewing, inspects local source packages, writes an evidence report, and creates one prompt per candidate for an AI maintainer. It is a candidate-plan workflow, not an automatic publish workflow.
 
 Plan-only mode:
 
@@ -87,7 +87,7 @@ Conservative deterministic edits:
 python3 scripts/auto_upgrade.py --handle <clawhub-handle> --limit 5 --apply-safe
 ```
 
-`--apply-safe` is intentionally narrow. It only appends missing example prompts or sensitive-domain safety boundaries to local `SKILL.md` files when the package has no forbidden files and a small file surface. It never publishes, hides, merges, deletes, renames, or changes ownership.
+`--apply-safe` is intentionally narrow and must not be used in the daily cron. It only appends missing example prompts or sensitive-domain safety boundaries to local `SKILL.md` files when the package has no forbidden files and a small file surface. It never publishes, hides, merges, deletes, renames, or changes ownership.
 
 For each generated prompt in `reports/auto_upgrade/latest/agent_prompts/`, run an AI maintainer with these gates:
 

@@ -18,10 +18,17 @@ LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(LOCAL_CACHE_DIR / "matplotlib"))
 os.environ.setdefault("XDG_CACHE_HOME", str(LOCAL_CACHE_DIR))
 
-import matplotlib
+try:
+    import matplotlib
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    HAS_MATPLOTLIB = True
+except Exception:
+    matplotlib = None
+    plt = None
+    HAS_MATPLOTLIB = False
 
 
 PALETTE = {
@@ -119,6 +126,10 @@ def slug_url(handle: str, slug: str) -> str:
     return f"https://clawhub.ai/{handle}/{slug}"
 
 
+def slug_html(slug: str) -> str:
+    return f'<code class="slug-token notranslate" translate="no">{html.escape(slug)}</code>'
+
+
 def chart_label(row: dict[str, str]) -> str:
     label = row.get("display_name") or row.get("slug") or "unknown"
     return label if len(label) <= 38 else label[:35] + "..."
@@ -152,6 +163,9 @@ def clean_row(row: dict[str, str], handle: str) -> dict[str, Any]:
 
 
 def save_action_chart(rows: list[dict[str, str]], path: Path) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, "Recommended action mix", "Chart rendering needs matplotlib. Table data is still available.")
+        return
     counts = Counter(row.get("recommended_action", "") for row in rows)
     keys = [
         "respond_fix_upload",
@@ -179,6 +193,9 @@ def save_action_chart(rows: list[dict[str, str]], path: Path) -> None:
 
 
 def save_decision_chart(rows: list[dict[str, str]], path: Path) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, "Low-signal triage decisions", "Chart rendering needs matplotlib. Table data is still available.")
+        return
     low_rows = [row for row in rows if row.get("meaningfulness") in {"low_signal", "plausible_but_low_signal"}]
     counts = Counter(row.get("portfolio_decision", "") for row in low_rows)
     keys = [
@@ -207,6 +224,9 @@ def save_decision_chart(rows: list[dict[str, str]], path: Path) -> None:
 
 
 def save_top_downloads_chart(rows: list[dict[str, str]], path: Path) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, "Top skills by downloads", "Chart rendering needs matplotlib. Table data is still available.")
+        return
     top = sorted(rows, key=lambda row: to_int(row.get("downloads")), reverse=True)[:20]
     top = list(reversed(top))
     labels = [row.get("display_name") or row.get("slug") for row in top]
@@ -226,6 +246,9 @@ def save_top_downloads_chart(rows: list[dict[str, str]], path: Path) -> None:
 
 
 def save_placeholder_chart(path: Path, title: str, message: str) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, title, message)
+        return
     fig, ax = plt.subplots(figsize=(10, 5.4), dpi=160)
     ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=PALETTE["ink"])
     ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=12, color=PALETTE["muted"], wrap=True)
@@ -239,6 +262,9 @@ def save_placeholder_chart(path: Path, title: str, message: str) -> None:
 
 
 def save_growth_chart(rows: list[dict[str, str]], path: Path, *, metric: str, title: str, color: str) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, title, "Chart rendering needs matplotlib. Growth data is still available.")
+        return
     top = [row for row in sorted(rows, key=lambda row: (to_int(row.get(metric)), to_int(row.get("downloads"))), reverse=True) if to_int(row.get(metric)) > 0][:20]
     if not top:
         save_placeholder_chart(path, title, "Need at least two snapshots with positive growth.")
@@ -263,6 +289,9 @@ def save_growth_chart(rows: list[dict[str, str]], path: Path, *, metric: str, ti
 
 
 def save_category_chart(rows: list[dict[str, str]], path: Path) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, "Largest skill categories", "Chart rendering needs matplotlib. Table data is still available.")
+        return
     counts = Counter(row.get("category", "Other") for row in rows)
     top = counts.most_common(12)
     labels = [label for label, _ in reversed(top)]
@@ -282,6 +311,9 @@ def save_category_chart(rows: list[dict[str, str]], path: Path) -> None:
 
 
 def save_score_scatter(rows: list[dict[str, str]], path: Path) -> None:
+    if not HAS_MATPLOTLIB:
+        save_svg_placeholder(path, "Meaning score versus downloads", "Chart rendering needs matplotlib. Table data is still available.")
+        return
     downloads = [max(1, to_int(row.get("downloads"))) for row in rows]
     scores = [to_float(row.get("meaning_score")) for row in rows]
     comments = [to_int(row.get("comments")) for row in rows]
@@ -299,6 +331,18 @@ def save_score_scatter(rows: list[dict[str, str]], path: Path) -> None:
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def save_svg_placeholder(path: Path, title: str, message: str) -> None:
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="864" viewBox="0 0 1600 864" role="img" aria-label="{html.escape(title)}">
+  <rect width="1600" height="864" fill="#ffffff"/>
+  <rect x="1" y="1" width="1598" height="862" fill="none" stroke="#d9dde7" stroke-width="2"/>
+  <text x="80" y="120" fill="#23262f" font-family="Inter, Arial, sans-serif" font-size="44" font-weight="700">{html.escape(title)}</text>
+  <text x="80" y="204" fill="#6d7280" font-family="Inter, Arial, sans-serif" font-size="28">{html.escape(message)}</text>
+  <text x="80" y="274" fill="#6d7280" font-family="Inter, Arial, sans-serif" font-size="22">Install matplotlib to render charts; the dashboard table and generated CSV files remain usable.</text>
+</svg>
+"""
+    path.write_text(svg, encoding="utf-8")
 
 
 def render_table_rows(rows: list[dict[str, Any]]) -> str:
@@ -369,8 +413,8 @@ def render_html(
             return '<p class="empty">No items in this queue right now.</p>'
         out = []
         for item in items:
-            title = html.escape(item["display_name"] or item["slug"])
-            slug = html.escape(item["slug"])
+            title = html.escape(item["display_name"]) if item["display_name"] else slug_html(item["slug"])
+            slug = slug_html(item["slug"])
             summary_text = html.escape(item["summary"][:160])
             out.append(
                 f'<a class="list-item" href="{html.escape(item["url"])}" target="_blank" rel="noreferrer">'
@@ -480,6 +524,7 @@ def render_html(
     .list-item small {{ color: var(--muted); margin-top: 2px; font-size: 12px; }}
     .list-item em {{ color: var(--muted); font-style: normal; margin-top: 4px; font-size: 12px; }}
     .list-item b {{ align-self: center; color: var(--teal); font-size: 20px; }}
+    .slug-token {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: .92em; color: var(--muted); background: transparent; unicode-bidi: isolate; }}
     .table-card {{ padding: 14px; }}
     .controls {{ display: grid; grid-template-columns: 2fr repeat(4, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }}
     input, select {{
@@ -767,6 +812,15 @@ def render_html(
       return map[value] || value || "";
     }}
 
+    function renderSlug(value) {{
+      return `<code class="slug-token notranslate" translate="no">${{escapeHtml(value || "")}}</code>`;
+    }}
+
+    function renderSkillTitle(row) {{
+      if (row.display_name) return escapeHtml(row.display_name);
+      return `<span class="notranslate" translate="no">${{escapeHtml(row.slug || "")}}</span>`;
+    }}
+
     function text(row) {{
       return [row.slug, row.display_name, row.summary, row.decision_reason, row.flags, row.category, row.merge_target].join(" ").toLowerCase();
     }}
@@ -791,7 +845,7 @@ def render_html(
       tbody.innerHTML = filtered.map(row => `
         <tr>
           <td class="num">${{row.score.toFixed(1)}}</td>
-          <td class="skill-cell"><a href="${{row.url}}" target="_blank" rel="noreferrer">${{escapeHtml(row.display_name || row.slug)}}</a><small>${{escapeHtml(row.slug)}} - ${{escapeHtml(row.summary || "")}}</small></td>
+          <td class="skill-cell"><a href="${{row.url}}" target="_blank" rel="noreferrer">${{renderSkillTitle(row)}}</a><small>${{renderSlug(row.slug)}} - ${{escapeHtml(row.summary || "")}}</small></td>
           <td><span class="pill decision-${{row.decision}}">${{escapeHtml(label(decisionLabels, row.decision))}}</span></td>
           <td><span class="pill action-${{row.action}}">${{escapeHtml(label(actionLabels, row.action))}}</span></td>
           <td><span class="pill">${{escapeHtml(label(verdictLabels, row.verdict))}}</span></td>
@@ -803,7 +857,7 @@ def render_html(
           <td class="num">${{number(row.comments)}}</td>
           <td class="num">${{number(row.versions)}}</td>
           <td>${{escapeHtml(row.category)}}</td>
-          <td>${{escapeHtml(row.merge_target || "")}}</td>
+          <td>${{row.merge_target ? renderSlug(row.merge_target) : ""}}</td>
           <td>${{escapeHtml(row.decision_reason || "")}}</td>
           <td>${{escapeHtml((row.flags || "").replaceAll("|", ", "))}}</td>
         </tr>
@@ -857,14 +911,15 @@ def main() -> int:
     trend_summary = read_json_if_exists(data_dir / "processed" / f"{args.handle}_trend_summary.json")
     rows = merge_growth(rows, growth_rows)
 
+    chart_ext = "png" if HAS_MATPLOTLIB else "svg"
     chart_files = {
-        "action": "assets/action_mix.png",
-        "decision": "assets/low_signal_decision_mix.png",
-        "downloads": "assets/top_downloads.png",
-        "growth_downloads": "assets/top_new_downloads.png",
-        "growth_installs": "assets/top_new_installs.png",
-        "category": "assets/category_mix.png",
-        "scatter": "assets/score_scatter.png",
+        "action": f"assets/action_mix.{chart_ext}",
+        "decision": f"assets/low_signal_decision_mix.{chart_ext}",
+        "downloads": f"assets/top_downloads.{chart_ext}",
+        "growth_downloads": f"assets/top_new_downloads.{chart_ext}",
+        "growth_installs": f"assets/top_new_installs.{chart_ext}",
+        "category": f"assets/category_mix.{chart_ext}",
+        "scatter": f"assets/score_scatter.{chart_ext}",
     }
     save_action_chart(rows, out_dir / chart_files["action"])
     save_decision_chart(rows, out_dir / chart_files["decision"])
